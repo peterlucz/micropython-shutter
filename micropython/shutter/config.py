@@ -1,7 +1,10 @@
-MQTT_SERVER  = '192.168.1.5'
-STATUS_TOPIC = 'pico/status'
-CONFIG_TOPIC = 'pico/config'
-DEVICES_FILE = 'devices.json'
-KEEPALIVE    = 120
-QUEUE_LEN    = 1
-DEBUG        = True
+MQTT_SERVER      = '192.168.1.5'
+STATUS_TOPIC     = 'pico/status'
+CONFIG_TOPIC     = 'pico/config'
+DEVICES_FILE     = 'devices.json'
+DISCOVERY_PREFIX = 'homeassistant'
+DEVICE_ID        = 'pico_relay'      # unique ID — change if running multiple Picos
+DEVICE_NAME      = 'Pico Relay'
+KEEPALIVE        = 120
+QUEUE_LEN        = 1
+DEBUG            = True

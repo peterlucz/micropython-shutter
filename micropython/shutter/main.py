@@ -1,10 +1,13 @@
 from mqtt_as import MQTTClient
 from mqtt_local import wifi_led, blue_led, config
-from config import STATUS_TOPIC, CONFIG_TOPIC, DEVICES_FILE, KEEPALIVE, QUEUE_LEN, DEBUG
+from config import (STATUS_TOPIC, CONFIG_TOPIC, DEVICES_FILE,
+                    DISCOVERY_PREFIX, DEVICE_ID, DEVICE_NAME,
+                    KEEPALIVE, QUEUE_LEN, DEBUG)
 import uasyncio as asyncio
 from machine import Pin
 import ujson
 import utime
+import gc
 
 # Keyed by device id, populated from devices.json on boot.
 devices      = {}
@@ -55,6 +58,56 @@ async def publish_shutter_state(device, state):
 
 async def publish_switch_state(device, state):
     await client.publish('switch/{}/state'.format(device['id']), state, qos=1)
+
+
+async def publish_discovery():
+    dev_info = {'ids': [DEVICE_ID], 'name': DEVICE_NAME,
+                'mdl': 'Waveshare Pico-Relay-B', 'mf': 'Waveshare'}
+    for dev_id, device in devices.items():
+        if device['type'] == 'shutter':
+            topic = '{}/cover/{}_{}/config'.format(DISCOVERY_PREFIX, DEVICE_ID, dev_id)
+            payload = ujson.dumps({
+                'name':        'Shutter {}'.format(dev_id),
+                'uniq_id':     '{}_{}_shutter_{}'.format(DEVICE_ID, DEVICE_NAME.replace(' ', '_'), dev_id),
+                'cmd_t':       'shutter/{}/set'.format(dev_id),
+                'set_pos_t':   'shutter/{}/set_position'.format(dev_id),
+                'stat_t':      'shutter/{}/state'.format(dev_id),
+                'val_tpl':     '{{ value_json.state }}',
+                'pos_t':       'shutter/{}/state'.format(dev_id),
+                'pos_tpl':     '{{ value_json.position }}',
+                'avty_t':      STATUS_TOPIC,
+                'pl_avail':    'online',
+                'pl_not_avail':'offline',
+                'pl_open':     'OPEN',
+                'pl_cls':      'CLOSE',
+                'pl_stop':     'STOP',
+                'stat_open':   'open',
+                'stat_clsd':   'closed',
+                'stat_opening':'opening',
+                'stat_closing':'closing',
+                'stat_stopped':'stopped',
+                'opt':         False,
+                'ret':         False,
+                'dev':         dev_info,
+            })
+        elif device['type'] == 'switch':
+            topic = '{}/switch/{}_{}/config'.format(DISCOVERY_PREFIX, DEVICE_ID, dev_id)
+            payload = ujson.dumps({
+                'name':        'Switch {}'.format(dev_id),
+                'uniq_id':     '{}_{}_switch_{}'.format(DEVICE_ID, DEVICE_NAME.replace(' ', '_'), dev_id),
+                'cmd_t':       'switch/{}/set'.format(dev_id),
+                'stat_t':      'switch/{}/state'.format(dev_id),
+                'pl_on':       'ON',
+                'pl_off':      'OFF',
+                'avty_t':      STATUS_TOPIC,
+                'pl_avail':    'online',
+                'pl_not_avail':'offline',
+                'dev':         dev_info,
+            })
+        else:
+            continue
+        await client.publish(topic, payload, retain=True, qos=1)
+        gc.collect()
 
 
 # ---------------------------------------------------------------------------
@@ -223,6 +276,8 @@ async def up(client):
         client.up.clear()
         wifi_led(True)
         print('Connected to broker.')
+        await client.publish(STATUS_TOPIC, 'online', retain=True, qos=1)
+        await publish_discovery()
         await client.subscribe(CONFIG_TOPIC, 1)
         for dev_id, device in devices.items():
             if device['type'] == 'shutter':
@@ -260,8 +315,7 @@ async def main(client):
 
     while True:
         await asyncio.sleep(30)
-        await client.publish(STATUS_TOPIC,
-            'ok repubs:{} outages:{}'.format(client.REPUB_COUNT, outages), qos=1)
+        await client.publish(STATUS_TOPIC, 'online', retain=True, qos=1)
 
 
 config['will']      = (STATUS_TOPIC, 'offline', False, 0)
