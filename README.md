@@ -81,23 +81,29 @@ The default layout (`devices.json`) is 3 shutters + 2 switches:
 
 ### Changing the layout on a running Pico
 
-Use the update script to publish one of five preset layouts via MQTT:
+Five preset layout files are included (8 relays, GPIO 14–21):
+
+| File | Shutters | Switches |
+|------|----------|----------|
+| `devices.json.example0` | 0 | 8 |
+| `devices.json.example1` | 1 | 6 |
+| `devices.json.example2` | 2 | 4 |
+| `devices.json.example3` | 3 | 2 — default |
+| `devices.json.example4` | 4 | 0 |
+
+Publish a preset to the running Pico:
 
 ```bash
-./update_config.sh
+./update_config.sh devices.json.example2
 ```
 
-Available presets (8 relays, GPIO 14–21):
+Running with no arguments lists the available files with a shutter/switch summary.
 
-| Option | Shutters | Switches |
-|--------|----------|----------|
-| `0` | 0 | 8 |
-| `1` | 1 | 6 |
-| `2` | 2 | 4 |
-| `3` | 3 | 2 — default |
-| `4` | 4 | 0 |
+You can also pass any custom JSON file:
 
-You can also pass the choice directly: `./update_config.sh 2`
+```bash
+./update_config.sh my_layout.json
+```
 
 The Pico saves the new config to flash immediately. **Reboot the Pico** to apply a new device layout:
 
