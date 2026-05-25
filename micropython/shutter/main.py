@@ -1,149 +1,278 @@
-# range.py Test of asynchronous mqtt client with clean session False.
-# (C) Copyright Peter Hinch 2017-2022.
-# Released under the MIT licence.
-
-# Now uses the event interface
-
-# Public brokers https://github.com/mqtt/mqtt.github.io/wiki/public_brokers
-
-# This demo is for wireless range tests. If OOR the red LED will light.
-# In range the blue LED will pulse for each received message.
-# Uses clean sessions to avoid backlog when OOR.
-
-# red LED: ON == WiFi fail
-# blue LED pulse == message received
-# Publishes connection statistics.
-
 from mqtt_as import MQTTClient
 from mqtt_local import wifi_led, blue_led, config
+from config import STATUS_TOPIC, CONFIG_TOPIC, DEVICES_FILE, KEEPALIVE, QUEUE_LEN, DEBUG
 import uasyncio as asyncio
 from machine import Pin
-import urequests
 import ujson
+import utime
 
-TOPIC = 'shutter/a/state'  # For demo publication and last will use same topic
-#TOPIC = 'shutter/pub'  # For demo publication and last will use same topic 
-SHUTTERCFG = 'http://192.168.1.5/~peter/1.json'
+# Keyed by device id, populated from devices.json on boot.
+devices      = {}
+active_tasks = {}
+outages      = 0
 
-outages = 0
-number_of_messages = 0
+# Keys that must not be written back to the JSON file.
+_SKIP_KEYS = {'pin_up', 'pin_down', 'pin'}
 
-async def pulse():  # This demo pulses blue LED each time a subscribed msg arrives.
-    blue_led(True)
-    await asyncio.sleep(1)
-    blue_led(False)
 
-async def relay_timer(relay_id, relay_time, topic_id, position):
-    #print(relay["id"] % 2)
-    if Pin(relay_id,Pin.OUT).value() == 0 and Pin(relay_id + 1 - 2*(relay_id % 2),Pin.OUT).value() == 0:
-        Pin(relay_id,Pin.OUT).high()
-        await asyncio.sleep_ms(relay_time)
-        Pin(relay_id,Pin.OUT).low()
-        shutter_data['shutter'][topic_id]['position'] = position
-        if position == 0:
-            new_state = "OFF"
+# ---------------------------------------------------------------------------
+# File-based config persistence
+# ---------------------------------------------------------------------------
+
+def load_config():
+    with open(DEVICES_FILE) as f:
+        return ujson.load(f)['devices']
+
+
+def save_config():
+    data = {'devices': [
+        {k: v for k, v in d.items() if k not in _SKIP_KEYS}
+        for d in sorted(devices.values(), key=lambda x: x['id'])
+    ]}
+    with open(DEVICES_FILE, 'w') as f:
+        ujson.dump(data, f)
+
+
+def apply_mqtt_config(payload):
+    """Merge incoming MQTT config with live positions, then save to file."""
+    new_data = ujson.loads(payload)
+    for d in new_data.get('devices', []):
+        if d.get('type') == 'shutter' and d['id'] in devices:
+            d['position'] = devices[d['id']].get('position', 0)
+    with open(DEVICES_FILE, 'w') as f:
+        ujson.dump(new_data, f)
+    print('Config updated on disk — reboot to apply new device layout.')
+
+
+# ---------------------------------------------------------------------------
+# State publishing
+# ---------------------------------------------------------------------------
+
+async def publish_shutter_state(device, state):
+    payload = ujson.dumps({'state': state, 'position': device['position']})
+    await client.publish('shutter/{}/state'.format(device['id']), payload, qos=1)
+
+
+async def publish_switch_state(device, state):
+    await client.publish('switch/{}/state'.format(device['id']), state, qos=1)
+
+
+# ---------------------------------------------------------------------------
+# Device coroutines
+# ---------------------------------------------------------------------------
+
+async def shutter_move(device, target):
+    start = device['position']
+
+    if target > start:
+        pin_active = device['pin_up']
+        pin_idle   = device['pin_down']
+        move_time  = int(device['time_up'] * (target - start) / 100)
+        direction  = 1
+        move_state = 'opening'
+    else:
+        pin_active = device['pin_down']
+        pin_idle   = device['pin_up']
+        move_time  = int(device['time_down'] * (start - target) / 100)
+        direction  = -1
+        move_state = 'closing'
+
+    # Safety: never activate if either relay in the pair is already on.
+    if pin_active.value() or pin_idle.value():
+        return
+
+    t0 = utime.ticks_ms()
+    try:
+        await publish_shutter_state(device, move_state)
+        pin_active.high()
+        await asyncio.sleep_ms(move_time)
+        pin_active.low()
+        device['position'] = target
+        save_config()
+        end_state = 'open' if target == 100 else 'closed' if target == 0 else 'open'
+        await publish_shutter_state(device, end_state)
+    except asyncio.CancelledError:
+        pin_active.low()
+        elapsed = utime.ticks_diff(utime.ticks_ms(), t0)
+        delta = round(elapsed / move_time * abs(target - start))
+        device['position'] = max(0, min(100, start + direction * delta))
+        save_config()
+        await publish_shutter_state(device, 'stopped')
+        raise
+
+
+async def switch_toggle(device, state):
+    pin = device['pin']
+    if state == 'ON':
+        pin.high()
+        await publish_switch_state(device, 'ON')
+        if 'duration' in device:
+            try:
+                await asyncio.sleep_ms(device['duration'])
+                pin.low()
+                await publish_switch_state(device, 'OFF')
+            except asyncio.CancelledError:
+                pin.low()
+                await publish_switch_state(device, 'OFF')
+                raise
+    else:
+        pin.low()
+        await publish_switch_state(device, 'OFF')
+
+
+# ---------------------------------------------------------------------------
+# Task management
+# ---------------------------------------------------------------------------
+
+async def cancel_active(dev_id):
+    task = active_tasks.get(dev_id)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except:
+            pass
+        active_tasks[dev_id] = None
+
+
+# ---------------------------------------------------------------------------
+# Command handlers
+# ---------------------------------------------------------------------------
+
+async def handle_shutter(device, command, payload):
+    dev_id = device['id']
+
+    if command == 'set_position':
+        try:
+            target = max(0, min(100, int(payload)))
+        except (ValueError, TypeError):
+            return
+    elif command == 'set':
+        cmd = payload.upper()
+        if   cmd == 'OPEN':  target = 100
+        elif cmd == 'CLOSE': target = 0
+        elif cmd == 'STOP':
+            await cancel_active(dev_id)
+            return
         else:
-            new_state = "ON"
-        await client.publish('shutter/a/state/' + str(topic_id) , '{"state":"' + new_state + '","brightness":' + str(position) + '}', qos = 1)
+            return
+    else:
+        return
+
+    if target == device['position']:
+        return
+
+    await cancel_active(dev_id)
+    active_tasks[dev_id] = asyncio.create_task(shutter_move(device, target))
+
+
+async def handle_switch(device, command, payload):
+    if command != 'set':
+        return
+    state = payload.upper()
+    if state not in ('ON', 'OFF'):
+        return
+    dev_id = device['id']
+    await cancel_active(dev_id)
+    active_tasks[dev_id] = asyncio.create_task(switch_toggle(device, state))
+
+
+# ---------------------------------------------------------------------------
+# MQTT tasks
+# ---------------------------------------------------------------------------
 
 async def messages(client):
     async for topic, msg, retained in client.queue:
-        print("Start")
         try:
-            msg_data = ujson.loads(msg.decode())
-            topic_id = int(topic.decode()[-1])
-            shutter = shutter_data['shutter'][topic_id]
-            current_position = shutter['position']
-            if "brightness" in msg_data:
-                new_position = msg_data["brightness"]
-            else:
-                if msg_data["state"] == 'ON':
-                    new_position = 100
-                else:
-                    new_position = 0
+            topic_str = topic.decode()
+            payload   = msg.decode().strip()
 
-            print(f'Topic ID: "{topic_id}" Current position: "{current_position}" New position: "{new_position}"')
+            if topic_str == CONFIG_TOPIC:
+                apply_mqtt_config(payload)
+                continue
 
-            if new_position > current_position:
-                full_time = shutter['time_up']
-                relay_id = shutter['up']
-                relay_time = int(full_time * (new_position - current_position) * 10)
-                action = True
-                print(f'Move up, Relay ID: "{relay_id}", Relay time: "{relay_time}" ms')
-            elif new_position < current_position:
-                full_time = shutter['time_down']
-                relay_id = shutter['down']
-                relay_time = int(full_time * (current_position - new_position) * 10)
-                action = True
-                print(f'Move down, Relay ID: "{relay_id}", Relay time: "{relay_time}" ms')
-            else:
-                action = False
-                print("No action needed!")
+            parts    = topic_str.split('/')
+            if len(parts) < 3:
+                continue
+            dev_type = parts[0]
+            device   = devices.get(int(parts[1]))
+            if device is None:
+                continue
 
-            if action:
-                asyncio.create_task(relay_timer(relay_id, relay_time, topic_id, new_position))
+            if dev_type == 'shutter' and device['type'] == 'shutter':
+                await handle_shutter(device, parts[2], payload)
+            elif dev_type == 'switch' and device['type'] == 'switch':
+                await handle_switch(device, parts[2], payload)
+        except Exception as e:
+            print('Message error: {}'.format(e))
 
-        #asyncio.create_task(pulse())
-        except:
-            print("Message is not the right JSON data")
-        
 
 async def down(client):
     global outages
     while True:
-        await client.down.wait()  # Pause until connectivity changes
+        await client.down.wait()
         client.down.clear()
         wifi_led(False)
         outages += 1
         print('WiFi or broker is down.')
+
 
 async def up(client):
     while True:
         await client.up.wait()
         client.up.clear()
         wifi_led(True)
-        print('We are connected to broker.')
-        await client.subscribe('shutter/a/set/0', 1)
-        await client.subscribe('shutter/a/set/1', 1)
-        await client.subscribe('shutter/a/set/2', 1)
-        await client.subscribe('shutter/a/set/3', 1)
+        print('Connected to broker.')
+        await client.subscribe(CONFIG_TOPIC, 1)
+        for dev_id, device in devices.items():
+            if device['type'] == 'shutter':
+                await client.subscribe('shutter/{}/set_position'.format(dev_id), 1)
+                await client.subscribe('shutter/{}/set'.format(dev_id), 1)
+            elif device['type'] == 'switch':
+                await client.subscribe('switch/{}/set'.format(dev_id), 1)
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap
+# ---------------------------------------------------------------------------
 
 async def main(client):
-    global shutter_data
+    device_list = load_config()
+
     try:
         await client.connect()
     except OSError:
         print('Connection failed.')
         return
 
-    response = urequests.get(SHUTTERCFG)
-    shutter_data = ujson.loads(response.text)
-    print(f"data is: {shutter_data}, url is: {SHUTTERCFG}")
-    for ii in range (14, 21):
-        Pin(ii,Pin.OUT).low()
+    for d in device_list:
+        dev_id = d['id']
+        if d['type'] == 'shutter':
+            d['pin_up']   = Pin(d['relay_up'],   Pin.OUT, value=0)
+            d['pin_down'] = Pin(d['relay_down'],  Pin.OUT, value=0)
+        elif d['type'] == 'switch':
+            d['pin'] = Pin(d['relay'], Pin.OUT, value=0)
+        devices[dev_id]      = d
+        active_tasks[dev_id] = None
 
     for task in (up, down, messages):
         asyncio.create_task(task(client))
-    n = 0
+
     while True:
-        await asyncio.sleep(5)
-        # print('publish', n)
-        # If WiFi is down the following will pause for the duration.
-        await client.publish(TOPIC, '{} repubs: {} outages: {}'.format(n, client.REPUB_COUNT, outages), qos = 1)
-        n += 1
+        await asyncio.sleep(30)
+        await client.publish(STATUS_TOPIC,
+            'ok repubs:{} outages:{}'.format(client.REPUB_COUNT, outages), qos=1)
 
-# Define configuration
-config['will'] = (TOPIC, 'Goodbye cruel world!', False, 0)
-config['keepalive'] = 120
-config["queue_len"] = 1  # Use event interface with default queue
 
-# Set up client. Enable optional debug statements.
-MQTTClient.DEBUG = True
+config['will']      = (STATUS_TOPIC, 'offline', False, 0)
+config['keepalive'] = KEEPALIVE
+config['queue_len'] = QUEUE_LEN
+MQTTClient.DEBUG    = DEBUG
 client = MQTTClient(config)
 
 try:
     asyncio.run(main(client))
-finally:  # Prevent LmacRxBlk:1 errors.
+finally:
     client.close()
     blue_led(True)
     asyncio.new_event_loop()

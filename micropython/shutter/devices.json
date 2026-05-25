@@ -1,0 +1,9 @@
+{
+  "devices": [
+    {"id": 0, "type": "shutter", "relay_up": 14, "relay_down": 15, "time_up": 30000, "time_down": 30000, "position": 0},
+    {"id": 1, "type": "shutter", "relay_up": 16, "relay_down": 17, "time_up": 30000, "time_down": 30000, "position": 0},
+    {"id": 2, "type": "shutter", "relay_up": 18, "relay_down": 19, "time_up": 30000, "time_down": 30000, "position": 0},
+    {"id": 3, "type": "switch",  "relay": 20},
+    {"id": 4, "type": "switch",  "relay": 21, "duration": 5000}
+  ]
+}
