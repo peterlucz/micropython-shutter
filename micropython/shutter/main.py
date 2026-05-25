@@ -1,13 +1,17 @@
 from mqtt_as import MQTTClient
 from mqtt_local import wifi_led, blue_led, config
 from config import (STATUS_TOPIC, CONFIG_TOPIC, DEVICES_FILE,
-                    DISCOVERY_PREFIX, DEVICE_ID, DEVICE_NAME,
-                    KEEPALIVE, QUEUE_LEN, DEBUG)
+                    DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG)
 import uasyncio as asyncio
 from machine import Pin
+import network
 import ujson
 import utime
 import gc
+
+# Set in main() from the WiFi MAC address — e.g. 'pico_relay_ab12cd'.
+DEVICE_ID   = None
+DEVICE_NAME = None
 
 # Keyed by device id, populated from devices.json on boot.
 devices      = {}
@@ -292,6 +296,13 @@ async def up(client):
 # ---------------------------------------------------------------------------
 
 async def main(client):
+    global DEVICE_ID, DEVICE_NAME
+    _mac    = network.WLAN(network.STA_IF).config('mac')
+    _suffix = ''.join('{:02x}'.format(b) for b in _mac[-3:])
+    DEVICE_ID   = 'pico_relay_{}'.format(_suffix)
+    DEVICE_NAME = 'Pico Relay {}'.format(_suffix.upper())
+    print('Device: {} ({})'.format(DEVICE_NAME, DEVICE_ID))
+
     device_list = load_config()
 
     try:

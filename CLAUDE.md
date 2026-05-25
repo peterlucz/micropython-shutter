@@ -67,12 +67,12 @@ STATUS_TOPIC     = 'pico/status'   # availability + heartbeat topic
 CONFIG_TOPIC     = 'pico/config'   # retained config update topic
 DEVICES_FILE     = 'devices.json'  # config file on Pico flash
 DISCOVERY_PREFIX = 'homeassistant' # HA MQTT discovery prefix
-DEVICE_ID        = 'pico_relay'    # unique per Pico — change if running multiple
-DEVICE_NAME      = 'Pico Relay'    # display name in HA
 KEEPALIVE        = 120
 QUEUE_LEN        = 1
 DEBUG            = True
 ```
+
+`DEVICE_ID` and `DEVICE_NAME` are **not** in `config.py` — they are derived at runtime from the last 3 bytes of the WiFi MAC address (e.g. MAC `…:AB:12:CD` → `DEVICE_ID = 'pico_relay_ab12cd'`, `DEVICE_NAME = 'Pico Relay AB12CD'`). This ensures each board is unique in HA without any manual config.
 
 ### `devices.json` — device layout
 ```json
@@ -133,7 +133,7 @@ No YAML configuration needed. The Pico publishes MQTT Discovery messages on ever
 
 **Adding or removing devices**: update `devices.json`, publish the new config to `pico/config` with retain, reboot the Pico. HA will add/remove entities on the next discovery publish.
 
-**Running multiple Picos**: set a unique `DEVICE_ID` in each `config.py` (e.g. `pico_relay_living`, `pico_relay_bedroom`) to keep their entities separate in HA.
+**Running multiple Picos**: no extra config needed — each board derives a unique `DEVICE_ID` from its WiFi MAC address automatically.
 
 ### Async Programming with uasyncio
 
