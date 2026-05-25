@@ -16,7 +16,8 @@ The application uses an **asynchronous event-driven architecture** with the foll
    - `up()` — resubscribes to all device topics on every reconnect
    - `down()` — tracks connectivity loss and increments outage counter
 3. **Device Control**: Per-device async tasks (`shutter_move`, `switch_toggle`) drive GPIO relay pins; tracked in `active_tasks` so they can be cancelled (e.g. STOP command)
-4. **State Publishing**: Publishes device state after each move and periodically publishes connection stats to `pico/status`
+4. **MQTT Discovery**: On every broker connect, `up()` publishes retained discovery configs to `homeassistant/cover/…` and `homeassistant/switch/…` so HA creates entities automatically
+5. **Availability**: Publishes `pico/status = "online"` on connect and every 30 s; LWT fires `"offline"` on disconnect so HA marks entities unavailable
 
 ### Device Types
 
@@ -44,7 +45,9 @@ The application uses an **asynchronous event-driven architecture** with the foll
 | `switch/{id}/set` | HA → Pico | `ON` / `OFF` |
 | `switch/{id}/state` | Pico → HA | `ON` / `OFF` |
 | `pico/config` | HA → Pico | Full `devices.json` JSON (retain=True) |
-| `pico/status` | Pico → HA | Heartbeat string every 30 s |
+| `pico/status` | Pico → HA | `"online"` / `"offline"` — availability + heartbeat |
+| `homeassistant/cover/{DEVICE_ID}_{id}/config` | Pico → HA | MQTT discovery payload (retain=True) |
+| `homeassistant/switch/{DEVICE_ID}_{id}/config` | Pico → HA | MQTT discovery payload (retain=True) |
 
 ## Key Files
 
@@ -59,13 +62,16 @@ The application uses an **asynchronous event-driven architecture** with the foll
 
 ### `config.py` — deployment parameters
 ```python
-MQTT_SERVER  = '192.168.1.5'   # MQTT broker IP
-STATUS_TOPIC = 'pico/status'   # heartbeat topic
-CONFIG_TOPIC = 'pico/config'   # retained config topic
-DEVICES_FILE = 'devices.json'  # config file on Pico flash
-KEEPALIVE    = 120
-QUEUE_LEN    = 1
-DEBUG        = True
+MQTT_SERVER      = '192.168.1.5'   # MQTT broker IP
+STATUS_TOPIC     = 'pico/status'   # availability + heartbeat topic
+CONFIG_TOPIC     = 'pico/config'   # retained config update topic
+DEVICES_FILE     = 'devices.json'  # config file on Pico flash
+DISCOVERY_PREFIX = 'homeassistant' # HA MQTT discovery prefix
+DEVICE_ID        = 'pico_relay'    # unique per Pico — change if running multiple
+DEVICE_NAME      = 'Pico Relay'    # display name in HA
+KEEPALIVE        = 120
+QUEUE_LEN        = 1
+DEBUG            = True
 ```
 
 ### `devices.json` — device layout
@@ -117,18 +123,17 @@ mosquitto_pub -h 192.168.1.5 -t shutter/0/set -m STOP
 mosquitto_pub -h 192.168.1.5 -t switch/1/set -m ON
 ```
 
-### Home Assistant Cover entity example
-```yaml
-cover:
-  - platform: mqtt
-    name: "Shutter 0"
-    command_topic: "shutter/0/set"
-    set_position_topic: "shutter/0/set_position"
-    state_topic: "shutter/0/state"
-    value_template: "{{ value_json.state }}"
-    position_topic: "shutter/0/state"
-    position_template: "{{ value_json.position }}"
-```
+### Home Assistant setup
+
+No YAML configuration needed. The Pico publishes MQTT Discovery messages on every boot, so HA creates Cover and Switch entities automatically.
+
+1. Deploy and boot the Pico
+2. In HA go to **Settings → Devices & Services → MQTT** — the device appears under the name set in `DEVICE_NAME`
+3. Entities are grouped under one HA device (identified by `DEVICE_ID`)
+
+**Adding or removing devices**: update `devices.json`, publish the new config to `pico/config` with retain, reboot the Pico. HA will add/remove entities on the next discovery publish.
+
+**Running multiple Picos**: set a unique `DEVICE_ID` in each `config.py` (e.g. `pico_relay_living`, `pico_relay_bedroom`) to keep their entities separate in HA.
 
 ### Async Programming with uasyncio
 
