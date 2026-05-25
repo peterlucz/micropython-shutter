@@ -1,0 +1,239 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Shutter automation package
+#
+# Place this file in your HA config directory under packages/shutters.yaml.
+# In configuration.yaml add:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# Prerequisites:
+#   - OpenWeatherMap integration added and named "owm" (entity: weather.owm)
+#   - Workday binary sensor set up (see binary_sensor section below)
+#   - Cover entities created via Pico MQTT Discovery
+#
+# CONFIGURE: update the cover entity IDs in each automation to match your HA
+# installation. Find them under Settings → Devices & Services → Entities.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+input_datetime:
+  waking_time_weekday:
+    name: "Waking time (weekday)"
+    has_time: true
+    has_date: false
+    icon: mdi:alarm
+
+  waking_time_weekend:
+    name: "Waking time (weekend / holiday)"
+    has_time: true
+    has_date: false
+    icon: mdi:alarm-snooze
+
+input_boolean:
+  manual_holiday_today:
+    name: "Manual holiday today"
+    icon: mdi:calendar-star
+
+  night_vent_active:
+    name: "Night ventilation active"
+    icon: mdi:weather-night
+
+input_number:
+  shutter_open_position:
+    name: "Shutter open position"
+    min: 30
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
+    mode: box
+
+  night_vent_temp_threshold:
+    name: "Night vent min temperature threshold"
+    min: 15
+    max: 30
+    step: 0.5
+    initial: 20
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+    mode: box
+
+
+# ── Workday sensor (Hungary) ──────────────────────────────────────────────────
+# Creates binary_sensor.workday_hu — ON on working days, OFF on weekends and
+# Hungarian public holidays. If this fails in newer HA versions, set up the
+# Workday integration via UI instead (Settings → Integrations → Workday).
+
+binary_sensor:
+  - platform: workday
+    country: HU
+    name: "Workday HU"
+
+
+# ── Automations ───────────────────────────────────────────────────────────────
+
+automation:
+
+  # ── 1. Morning open ──────────────────────────────────────────────────────────
+  # Runs at 04:00. Fetches today's forecast, calculates the opening position
+  # from the max temperature, sets the night vent flag from the min temperature,
+  # then waits until max(sunrise, waking_time) before opening all shutters.
+  #
+  # Position formula:
+  #   tempmax <= 25°C  →  100%
+  #   tempmax >= 35°C  →   30%
+  #   in between       →  linear:  100 - (tempmax - 25) * 7
+
+  - id: shutters_morning_open
+    alias: "Shutters: morning open"
+    trigger:
+      - platform: time
+        at: "04:00:00"
+    action:
+      # Fetch today's daily forecast from OWM
+      - action: weather.get_forecast
+        target:
+          entity_id: weather.owm
+        data:
+          type: daily
+        response_variable: forecast
+
+      # Extract temperatures from today's forecast (index 0)
+      - variables:
+          tempmax: "{{ forecast.forecast[0].temperature | float(20) }}"
+          tempmin: "{{ forecast.forecast[0].templow | float(15) }}"
+
+      # Calculate opening position and select correct waking time
+      - variables:
+          position: >-
+            {{ [[100 - ((tempmax - 25) * 7), 30] | max, 100] | min | round | int }}
+          is_non_working: >-
+            {{ is_state('binary_sensor.workday_hu', 'off')
+               or is_state('input_boolean.manual_holiday_today', 'on') }}
+
+      # Choose waking time based on working day / non-working day
+      - variables:
+          waking_str: >-
+            {{ states('input_datetime.waking_time_weekend')
+               if is_non_working
+               else states('input_datetime.waking_time_weekday') }}
+
+      # Calculate the actual open time: max(sunrise, waking_time)
+      - variables:
+          open_at: >-
+            {{ [ today_at(waking_str),
+                 state_attr('sun.sun', 'next_rising') | as_datetime | as_local
+               ] | max }}
+
+      # Store opening position so it's visible in the UI
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.shutter_open_position
+        data:
+          value: "{{ position }}"
+
+      # Set night ventilation flag based on tonight's minimum temperature
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >-
+                  {{ tempmin > states('input_number.night_vent_temp_threshold') | float(20) }}
+            sequence:
+              - action: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.night_vent_active
+        default:
+          - action: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.night_vent_active
+
+      # Wait until the calculated open time (max 6h safety timeout)
+      - wait_template: "{{ now() >= open_at }}"
+        timeout: "06:00:00"
+
+      # Open all shutters to the temperature-based position
+      - action: cover.set_cover_position
+        target:
+          entity_id:            # CONFIGURE: replace with your actual entity IDs
+            - cover.shutter_0
+            - cover.shutter_1
+            - cover.shutter_2
+        data:
+          position: "{{ position }}"
+
+
+  # ── 2. Evening close — main group ────────────────────────────────────────────
+  # Closes shutters 0 and 1 at sunset.
+
+  - id: shutters_evening_close_main
+    alias: "Shutters: evening close (main)"
+    trigger:
+      - platform: sun
+        event: sunset
+        offset: "00:00:00"
+    action:
+      - action: cover.set_cover_position
+        target:
+          entity_id:            # CONFIGURE
+            - cover.shutter_0
+            - cover.shutter_1
+        data:
+          position: 0
+
+
+  # ── 3. Evening close — delayed group ─────────────────────────────────────────
+  # Closes shutter 2 twenty minutes after sunset.
+
+  - id: shutters_evening_close_delayed
+    alias: "Shutters: evening close (delayed)"
+    trigger:
+      - platform: sun
+        event: sunset
+        offset: "00:20:00"
+    action:
+      - action: cover.set_cover_position
+        target:
+          entity_id:            # CONFIGURE
+            - cover.shutter_2
+        data:
+          position: 0
+
+
+  # ── 4. Night ventilation ──────────────────────────────────────────────────────
+  # At 22:30, if tonight's minimum temperature exceeds the threshold, raises
+  # selected shutters to 55% for ventilation.
+  # CONFIGURE: update entity_id list when night vent shutters are decided.
+
+  - id: shutters_night_vent
+    alias: "Shutters: night ventilation"
+    trigger:
+      - platform: time
+        at: "22:30:00"
+    condition:
+      - condition: state
+        entity_id: input_boolean.night_vent_active
+        state: "on"
+    action:
+      - action: cover.set_cover_position
+        target:
+          entity_id:            # CONFIGURE: which shutters get night ventilation
+            - cover.shutter_0
+        data:
+          position: 55
+
+
+  # ── 5. Reset manual holiday flag at midnight ──────────────────────────────────
+  # Clears manual_holiday_today at midnight so it never carries over to the next day.
+
+  - id: shutters_reset_manual_holiday
+    alias: "Shutters: reset manual holiday"
+    trigger:
+      - platform: time
+        at: "00:00:00"
+    action:
+      - action: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.manual_holiday_today
