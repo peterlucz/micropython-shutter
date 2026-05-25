@@ -4,84 +4,150 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This repository contains MicroPython firmware for automated window shutter control via MQTT. The application runs on embedded platforms (ESP8266, ESP32, PyBoard, RP2) and manages multiple electric shutters through relay control, responding to commands received over MQTT.
+This repository contains MicroPython firmware for automated window shutter and switch control via MQTT. The application runs on a **Raspberry Pi Pico W** with a **Waveshare Pico-Relay-B** board (8 relays on GPIO 14–21) and integrates with **Home Assistant** via MQTT Cover and Switch entities.
 
 ## Architecture
 
 The application uses an **asynchronous event-driven architecture** with the following flow:
 
-1. **Initialization**: Connects to WiFi and MQTT broker, fetches shutter configuration from HTTP endpoint (`SHUTTERCFG` URL)
-2. **Message Processing**: Asynchronous tasks handle three concurrent streams:
-   - `messages()` - Receives position commands from MQTT topics (`shutter/a/set/0-3`)
-   - `up()` - Monitors connection state, resubscribes on reconnect
-   - `down()` - Tracks connectivity loss and increments outage counter
-3. **Relay Control**: `relay_timer()` tasks pulse GPIO relay pins to move shutters for calculated durations
-4. **State Publishing**: Periodically publishes shutter positions and connection stats to `shutter/a/state`
+1. **Initialization**: Loads device config from `devices.json` on flash, connects to WiFi and MQTT broker
+2. **Message Processing**: Three concurrent async tasks:
+   - `messages()` — dispatches incoming MQTT commands to the correct device handler; also handles `pico/config` updates
+   - `up()` — resubscribes to all device topics on every reconnect
+   - `down()` — tracks connectivity loss and increments outage counter
+3. **Device Control**: Per-device async tasks (`shutter_move`, `switch_toggle`) drive GPIO relay pins; tracked in `active_tasks` so they can be cancelled (e.g. STOP command)
+4. **State Publishing**: Publishes device state after each move and periodically publishes connection stats to `pico/status`
+
+### Device Types
+
+| Type | Relays | MQTT topics | Notes |
+|------|--------|-------------|-------|
+| `shutter` | 2 (up + down) | `shutter/{id}/set`, `shutter/{id}/set_position`, `shutter/{id}/state` | Mutual exclusion enforced; position estimated on STOP |
+| `switch` | 1 | `switch/{id}/set`, `switch/{id}/state` | Optional `duration` ms for auto-off |
 
 ### Key Design Patterns
 
-- **uasyncio-based**: All I/O operations are non-blocking using Python's asyncio
+- **uasyncio-based**: All I/O operations are non-blocking
 - **Queue-based messaging**: MQTT messages are queued and processed asynchronously
-- **Configuration from HTTP**: Shutter parameters (timing, relay pins) loaded from external JSON endpoint
-- **GPIO relay timing**: Shutter position calculated by pulse duration: `relay_time = full_time * (position_delta / 100) * 10ms`
-- **Event-driven LED feedback**: Red LED indicates WiFi/MQTT loss, blue LED pulses on message receive
+- **Config from flash**: Device layout (relay pins, timing, type) stored in `devices.json`; updated via `pico/config` MQTT topic with `retain=True`
+- **Position persistence**: Shutter positions written to `devices.json` after every move so they survive reboots
+- **Task cancellation**: `cancel_active()` cancels any running move before starting a new one; STOP command estimates current position from elapsed time
+- **Relay timing**: `move_time = time_up_or_down_ms * position_delta / 100`
+
+### MQTT Topic Reference
+
+| Topic | Direction | Payload |
+|-------|-----------|---------|
+| `shutter/{id}/set` | HA → Pico | `OPEN` / `CLOSE` / `STOP` |
+| `shutter/{id}/set_position` | HA → Pico | `0`–`100` |
+| `shutter/{id}/state` | Pico → HA | `{"state": "open", "position": 75}` |
+| `switch/{id}/set` | HA → Pico | `ON` / `OFF` |
+| `switch/{id}/state` | Pico → HA | `ON` / `OFF` |
+| `pico/config` | HA → Pico | Full `devices.json` JSON (retain=True) |
+| `pico/status` | Pico → HA | Heartbeat string every 30 s |
 
 ## Key Files
 
-- **`micropython/shutter/main.py`** - Main application entry point with async task orchestration
-- **`micropython/shutter/mqtt_as.py`** - MQTT client library (async version, ~1100 lines)
-- **`micropython/shutter/mqtt_local.py`** - Platform-specific configuration (WiFi SSID, MQTT broker, LED pin definitions)
-- **`micropython/shutter/lib/json/`** - JSON serialization library for MicroPython platforms
+- **`micropython/shutter/main.py`** — Main application: config loading, async tasks, device handlers
+- **`micropython/shutter/config.py`** — All deployment parameters: MQTT server IP, topic names, timing constants
+- **`micropython/shutter/devices.json`** — Device layout stored on Pico flash; edit before first deploy
+- **`micropython/shutter/mqtt_local.py`** — Pico W WiFi/MQTT connection setup and LED definitions
+- **`micropython/shutter/secrets.py`** — WiFi and MQTT credentials (not committed; see `secrets.py.example`)
+- **`micropython/shutter/mqtt_as.py`** — Third-party async MQTT client library (~1100 lines, do not modify)
+
+## Configuration
+
+### `config.py` — deployment parameters
+```python
+MQTT_SERVER  = '192.168.1.5'   # MQTT broker IP
+STATUS_TOPIC = 'pico/status'   # heartbeat topic
+CONFIG_TOPIC = 'pico/config'   # retained config topic
+DEVICES_FILE = 'devices.json'  # config file on Pico flash
+KEEPALIVE    = 120
+QUEUE_LEN    = 1
+DEBUG        = True
+```
+
+### `devices.json` — device layout
+```json
+{
+  "devices": [
+    {"id": 0, "type": "shutter", "relay_up": 14, "relay_down": 15,
+     "time_up": 30000, "time_down": 30000, "position": 0},
+    {"id": 1, "type": "switch", "relay": 20},
+    {"id": 2, "type": "switch", "relay": 21, "duration": 5000}
+  ]
+}
+```
+`time_up` / `time_down` are milliseconds for full travel (0 → 100%). `duration` is milliseconds for auto-off switches.
+
+### Updating config from Home Assistant
+Publish the updated JSON to `pico/config` with **retain=True** in HA Developer Tools → MQTT. The Pico saves it to `devices.json` on receipt; reboot to apply a new device layout. Position values in the incoming config are ignored — live positions are preserved automatically.
 
 ## Development Notes
 
 ### Deployment
 
-These are raw Python files deployed directly to a microcontroller's filesystem. There is no build system. To develop:
+Files to upload to the Pico with `mpremote`:
+```bash
+mpremote cp config.py secrets.py mqtt_local.py main.py mqtt_as.py devices.json :
+```
 
-1. Modify `.py` files as needed
-2. Upload changed files to the microcontroller's filesystem using a MicroPython upload tool (e.g., `ampy`, `mpremote`, or WebREPL)
-3. The microcontroller runs `main.py` on boot via the boot sequence
+For quick iteration without flashing:
+```bash
+mpremote run main.py
+```
 
-### Configuration
+### Testing
 
-`mqtt_local.py` contains:
-- MQTT broker address, username, password
-- WiFi SSID and password
-- Platform-specific LED pin mappings (active-high/active-low handling per platform)
+Monitor serial output in one terminal:
+```bash
+mpremote
+```
 
-The shutter configuration itself (relay pins, timing per shutter) is fetched from an HTTP endpoint during runtime and not stored in code.
+Subscribe to all MQTT traffic in another:
+```bash
+mosquitto_sub -h 192.168.1.5 -t '#' -v
+```
+
+Send test commands:
+```bash
+mosquitto_pub -h 192.168.1.5 -t shutter/0/set_position -m 50
+mosquitto_pub -h 192.168.1.5 -t shutter/0/set -m STOP
+mosquitto_pub -h 192.168.1.5 -t switch/1/set -m ON
+```
+
+### Home Assistant Cover entity example
+```yaml
+cover:
+  - platform: mqtt
+    name: "Shutter 0"
+    command_topic: "shutter/0/set"
+    set_position_topic: "shutter/0/set_position"
+    state_topic: "shutter/0/state"
+    value_template: "{{ value_json.state }}"
+    position_topic: "shutter/0/state"
+    position_template: "{{ value_json.position }}"
+```
 
 ### Async Programming with uasyncio
 
-All I/O is asynchronous:
-- Use `await asyncio.sleep()` for delays (not `time.sleep()`)
+- Use `await asyncio.sleep()` / `asyncio.sleep_ms()` for delays (not `time.sleep()`)
 - Use `await client.subscribe()`, `await client.publish()` for MQTT operations
 - Create concurrent tasks with `asyncio.create_task()`
-- Handle multiple simultaneous relay timers via task creation in the message handler
+- Cancel tasks with `task.cancel()` + `await task` inside a try/except
 
 ### MicroPython-Specific Considerations
 
-- Use `ujson` (MicroPython's JSON) instead of standard `json`
-- Use `uasyncio` instead of standard `asyncio`
-- Use `urequests` instead of `requests` for HTTP
-- Use `machine` module for GPIO control (not RPi.GPIO or similar)
-- Memory is constrained; `gc.collect()` calls are used in `mqtt_as.py` to manage heap
+- Use `ujson` instead of standard `json`
+- Use `uasyncio` instead of standard `asyncio` (imported as `asyncio`)
+- Use `machine.Pin` for GPIO control
+- `asyncio.CancelledError` is available in MicroPython 1.20+
+- File I/O (`open`, `ujson.dump`) is synchronous but fast enough for small files
 
 ### Common Modifications
 
-- **Change MQTT topics**: Edit the hardcoded topic strings in `main.py` (`TOPIC` constant and `subscribe()` calls)
-- **Change shutter count**: Modify the loop that subscribes to `shutter/a/set/X` topics and the corresponding GPIO ranges
-- **Adjust relay pins**: The shutter configuration JSON determines which GPIO pins control which shutters
-- **Change platforms**: Platform detection is done in `mqtt_local.py` via `sys.platform` checks
-
-## Testing Strategy
-
-There is no formal test framework. To verify changes:
-
-1. Deploy the modified code to a test microcontroller
-2. Monitor MQTT traffic using `mosquitto_sub` or similar
-3. Send test commands via `mosquitto_pub` to verify relay control
-4. Check serial output via the microcontroller's REPL for debug messages
-
-The code includes `MQTTClient.DEBUG = True` for detailed logging.
+- **Add a device**: Add an entry to `devices.json` and publish to `pico/config` with retain, or edit the file and redeploy
+- **Change relay pins or timing**: Edit `devices.json` (or publish new config via MQTT)
+- **Change MQTT broker or topics**: Edit `config.py`
+- **Change WiFi or MQTT credentials**: Edit `secrets.py`
