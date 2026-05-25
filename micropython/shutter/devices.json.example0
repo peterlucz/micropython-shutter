@@ -1,0 +1,12 @@
+{
+  "devices": [
+    {"id": 0, "type": "switch", "relay": 14},
+    {"id": 1, "type": "switch", "relay": 15},
+    {"id": 2, "type": "switch", "relay": 16},
+    {"id": 3, "type": "switch", "relay": 17},
+    {"id": 4, "type": "switch", "relay": 18},
+    {"id": 5, "type": "switch", "relay": 19},
+    {"id": 6, "type": "switch", "relay": 20},
+    {"id": 7, "type": "switch", "relay": 21, "duration": 5000}
+  ]
+}

@@ -1,18 +1,21 @@
 #!/bin/bash
-# update_config.sh — Publish a new devices.json config to a running Pico via MQTT.
+# update_config.sh — Publish a devices.json config file to a running Pico via MQTT.
 #
-# Usage: ./update_config.sh [0-4]
+# Usage: ./update_config.sh <config-file>
 #
-# Configs (8 relays on GPIO 14-21):
-#   v0 — 0 shutters, 8 switches
-#   v1 — 1 shutter,  6 switches
-#   v2 — 2 shutters, 4 switches
-#   v3 — 3 shutters, 2 switches  (default factory layout)
-#   v4 — 4 shutters, 0 switches
+# Examples:
+#   ./update_config.sh devices.json.example3
+#   ./update_config.sh my_custom_layout.json
+#
+# Example files (8 relays on GPIO 14-21):
+#   devices.json.example0  —  0 shutters, 8 switches
+#   devices.json.example1  —  1 shutter,  6 switches
+#   devices.json.example2  —  2 shutters, 4 switches
+#   devices.json.example3  —  3 shutters, 2 switches  (default factory layout)
+#   devices.json.example4  —  4 shutters, 0 switches
 #
 # After publishing, the Pico saves the new config to devices.json on flash.
-# Reboot the Pico to apply a new device layout (relay pin / type changes).
-# Timing changes (time_up / time_down) take effect after reboot as well.
+# Reboot the Pico to apply layout changes:  mpremote reset
 
 set -euo pipefail
 
@@ -25,113 +28,55 @@ info() { echo -e "${GREEN}[+]${NC} $*"; }
 warn() { echo -e "${YELLOW}[!]${NC} $*"; }
 die()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
 
-# ── read credentials and broker from project files ────────────────────────────
+# ── usage ─────────────────────────────────────────────────────────────────────
+if [ $# -ne 1 ]; then
+    echo "Usage: $0 <config-file>"
+    echo ""
+    echo "Available example files:"
+    for f in "$SCRIPT_DIR"/devices.json.example*; do
+        [ -f "$f" ] || continue
+        name=$(basename "$f")
+        shutters=$(python3 -c "
+import json
+d = json.load(open('$f'))['devices']
+s = sum(1 for x in d if x['type']=='shutter')
+w = sum(1 for x in d if x['type']=='switch')
+print('{} shutter{}, {} switch{}'.format(s, 's' if s!=1 else '', w, 'es' if w!=1 else ''))
+" 2>/dev/null || echo "?")
+        printf "  %-30s  %s\n" "$name" "$shutters"
+    done
+    exit 1
+fi
+
+CONFIG_FILE="$1"
+
+# Resolve relative paths against the script directory if the file isn't found as-is
+if [ ! -f "$CONFIG_FILE" ]; then
+    CONFIG_FILE="$SCRIPT_DIR/$1"
+fi
+[ -f "$CONFIG_FILE" ] || die "File not found: $1"
+
+# ── validate JSON ─────────────────────────────────────────────────────────────
+python3 -c "import json; json.load(open('$CONFIG_FILE'))" 2>/dev/null \
+    || die "$CONFIG_FILE is not valid JSON"
+
+# ── read credentials and broker ───────────────────────────────────────────────
 cd "$SCRIPT_DIR"
-[ -f secrets.py ]   || die "secrets.py not found in $SCRIPT_DIR"
-[ -f config.py ]    || die "config.py not found in $SCRIPT_DIR"
+[ -f secrets.py ] || die "secrets.py not found in $SCRIPT_DIR"
+[ -f config.py ]  || die "config.py not found in $SCRIPT_DIR"
 
 BROKER=$(python3 -c "exec(open('config.py').read()); print(MQTT_SERVER)")
 MQTT_USER=$(python3 -c "exec(open('secrets.py').read()); print(MQTT_USER)")
 MQTT_PASS=$(python3 -c "exec(open('secrets.py').read()); print(MQTT_PASSWORD)")
 
-# ── config definitions ────────────────────────────────────────────────────────
-# Relay layout:  shutter = 2 relays (up + down), switch = 1 relay
-# GPIO 14-21 (8 relays total):  shutters use consecutive pairs from the left.
-# time_up / time_down = ms for full travel (0→100%).  Calibrate per installation.
-# duration = ms auto-off for timed switches; omit for manual switches.
-
-CONFIG_0='{
-  "devices": [
-    {"id": 0, "type": "switch", "relay": 14},
-    {"id": 1, "type": "switch", "relay": 15},
-    {"id": 2, "type": "switch", "relay": 16},
-    {"id": 3, "type": "switch", "relay": 17},
-    {"id": 4, "type": "switch", "relay": 18},
-    {"id": 5, "type": "switch", "relay": 19},
-    {"id": 6, "type": "switch", "relay": 20},
-    {"id": 7, "type": "switch", "relay": 21, "duration": 5000}
-  ]
-}'
-
-CONFIG_1='{
-  "devices": [
-    {"id": 0, "type": "shutter", "relay_up": 14, "relay_down": 15, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 1, "type": "switch", "relay": 16},
-    {"id": 2, "type": "switch", "relay": 17},
-    {"id": 3, "type": "switch", "relay": 18},
-    {"id": 4, "type": "switch", "relay": 19},
-    {"id": 5, "type": "switch", "relay": 20},
-    {"id": 6, "type": "switch", "relay": 21, "duration": 5000}
-  ]
-}'
-
-CONFIG_2='{
-  "devices": [
-    {"id": 0, "type": "shutter", "relay_up": 14, "relay_down": 15, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 1, "type": "shutter", "relay_up": 16, "relay_down": 17, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 2, "type": "switch", "relay": 18},
-    {"id": 3, "type": "switch", "relay": 19},
-    {"id": 4, "type": "switch", "relay": 20},
-    {"id": 5, "type": "switch", "relay": 21, "duration": 5000}
-  ]
-}'
-
-CONFIG_3='{
-  "devices": [
-    {"id": 0, "type": "shutter", "relay_up": 14, "relay_down": 15, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 1, "type": "shutter", "relay_up": 16, "relay_down": 17, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 2, "type": "shutter", "relay_up": 18, "relay_down": 19, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 3, "type": "switch", "relay": 20},
-    {"id": 4, "type": "switch", "relay": 21, "duration": 5000}
-  ]
-}'
-
-CONFIG_4='{
-  "devices": [
-    {"id": 0, "type": "shutter", "relay_up": 14, "relay_down": 15, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 1, "type": "shutter", "relay_up": 16, "relay_down": 17, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 2, "type": "shutter", "relay_up": 18, "relay_down": 19, "time_up": 25000, "time_down": 25000, "position": 0},
-    {"id": 3, "type": "shutter", "relay_up": 20, "relay_down": 21, "time_up": 25000, "time_down": 25000, "position": 0}
-  ]
-}'
-
-# ── menu ──────────────────────────────────────────────────────────────────────
-show_menu() {
-    echo ""
-    echo -e "${BOLD}Select a device layout (8 relays on GPIO 14–21):${NC}"
-    echo ""
-    echo "  0)  0 shutters  8 switches  — all switches (7 manual + 1 timed)"
-    echo "  1)  1 shutter   6 switches  — 1 timed switch"
-    echo "  2)  2 shutters  4 switches  — 1 timed switch"
-    echo "  3)  3 shutters  2 switches  — 1 timed switch  [current factory default]"
-    echo "  4)  4 shutters  0 switches"
-    echo ""
-}
-
-# ── select config ─────────────────────────────────────────────────────────────
-if [ $# -ge 1 ]; then
-    CHOICE="$1"
-else
-    show_menu
-    read -rp "Choice [0-4]: " CHOICE
-fi
-
-case "$CHOICE" in
-    0) PAYLOAD="$CONFIG_0"; DESC="0 shutters, 8 switches" ;;
-    1) PAYLOAD="$CONFIG_1"; DESC="1 shutter, 6 switches" ;;
-    2) PAYLOAD="$CONFIG_2"; DESC="2 shutters, 4 switches" ;;
-    3) PAYLOAD="$CONFIG_3"; DESC="3 shutters, 2 switches" ;;
-    4) PAYLOAD="$CONFIG_4"; DESC="4 shutters, 0 switches" ;;
-    *) die "Invalid choice '$CHOICE'. Must be 0–4." ;;
-esac
-
 # ── confirm ───────────────────────────────────────────────────────────────────
 echo ""
-info "Selected: v${CHOICE} — ${DESC}"
+info "Config file : $(basename "$CONFIG_FILE")"
+info "Broker      : $BROKER"
 echo ""
-echo "$PAYLOAD"
+cat "$CONFIG_FILE"
 echo ""
-read -rp "Publish this config to pico/config on broker ${BROKER}? [y/N] " CONFIRM
+read -rp "Publish to pico/config on broker ${BROKER}? [y/N] " CONFIRM
 [[ "$CONFIRM" =~ ^[Yy]$ ]] || { warn "Aborted."; exit 0; }
 
 # ── publish ───────────────────────────────────────────────────────────────────
@@ -141,9 +86,9 @@ mosquitto_pub \
     -P "$MQTT_PASS" \
     -t "pico/config" \
     -r \
-    -m "$PAYLOAD"
+    -f "$CONFIG_FILE"
 
-ok "Published to pico/config (retain=true)"
+ok "Published $(basename "$CONFIG_FILE") to pico/config (retain=true)"
 echo ""
 warn "The Pico will save the new config to devices.json on flash."
 warn "Reboot the Pico to apply the new layout:  mpremote reset"
