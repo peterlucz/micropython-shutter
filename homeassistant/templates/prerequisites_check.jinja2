@@ -1,0 +1,28 @@
+{%- set checks = [
+  ('weather.forecast_home',                    'Met.no (weather.forecast_home)'),
+  ('binary_sensor.workday_sensor',            'Workday sensor — Hungary'),
+  ('cover.shutters_workday_morning',          'Cover group: Workday morning'),
+  ('cover.shutters_weekend_morning',          'Cover group: Weekend morning'),
+  ('cover.shutters_evening',                  'Cover group: Evening'),
+  ('cover.shutters_evening_delayed',          'Cover group: Evening delayed'),
+  ('cover.shutters_night_ventilation',        'Cover group: Night ventilation'),
+  ('input_datetime.workday_morning_earliest', 'Helper: Workday earliest time'),
+  ('input_datetime.weekend_morning_time',     'Helper: Weekend morning time'),
+  ('input_number.shutter_temp_full_open',     'Helper: Temp for full open'),
+  ('input_number.shutter_temp_min_open',      'Helper: Temp for minimum open'),
+  ('input_number.shutter_min_position',       'Helper: Minimum open position'),
+  ('input_number.evening_delayed_offset_min', 'Helper: Evening delayed offset'),
+  ('input_number.night_vent_offset_min',      'Helper: Night vent offset'),
+  ('input_number.night_vent_temp_threshold',  'Helper: Night vent temp threshold'),
+  ('input_number.night_vent_position',        'Helper: Night vent position'),
+] -%}
+{%- set ns = namespace(fail=0) -%}
+{%- for eid, _ in checks -%}
+  {%- if expand(eid) | list | count == 0 -%}{%- set ns.fail = ns.fail + 1 -%}{%- endif -%}
+{%- endfor -%}
+Shutter automation — prerequisites
+{{ '✅ All ' ~ checks|length ~ ' checks passed' if ns.fail == 0 else '❌ ' ~ ns.fail ~ ' of ' ~ checks|length ~ ' checks failed' }}
+---
+{%- for eid, label in checks %}
+{{ '✅' if expand(eid) | list | count > 0 else '❌' }}  {{ label }}
+{%- endfor %}

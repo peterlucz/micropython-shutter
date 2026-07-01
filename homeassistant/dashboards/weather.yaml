@@ -1,0 +1,69 @@
+# Weather dashboard — current conditions + daily/hourly forecast
+# Entity: weather.forecast_home (Met.no — the working integration; OWM was abandoned)
+#
+# Layout: HA "sections" view (requires HA 2024.3+). The hourly forecast card is
+# given full width so the built-in weather-forecast card renders as many hourly
+# columns as possible (count scales with width — wide screens approach ~24h).
+# A true line/area chart of the forecast needs a custom card (e.g. ApexCharts);
+# this stays 100% built-in, no HACS/resources.
+#
+# How to use: Settings → Dashboards → "+ Add dashboard" → New from scratch → open
+# it → ⋮ Edit → ⋮ Raw configuration editor → paste from `title:` down.
+# (Already pushed to HA at /weather-dashboard via the WebSocket API.)
+
+title: Weather
+views:
+  - title: Weather
+    path: weather
+    icon: mdi:weather-partly-cloudy
+    type: sections
+    max_columns: 2
+    sections:
+      # ── Current conditions summary ───────────────────────────────
+      - type: grid
+        cards:
+          - type: markdown
+            content: >
+              ## {{ states('weather.forecast_home') | replace('-', ' ') |
+              replace('_', ' ') | title }}
+
+
+              # {{ state_attr('weather.forecast_home', 'temperature') }}{{
+              state_attr('weather.forecast_home', 'temperature_unit') }}
+
+
+              | | |
+              |---|---|
+              | 💧 Humidity | {{ state_attr('weather.forecast_home', 'humidity') }} % |
+              | 🌬️ Wind | {{ state_attr('weather.forecast_home', 'wind_speed') }} {{ state_attr('weather.forecast_home', 'wind_speed_unit') }} ({{ state_attr('weather.forecast_home', 'wind_bearing') }}°) |
+              | 🧭 Pressure | {{ state_attr('weather.forecast_home', 'pressure') }} {{ state_attr('weather.forecast_home', 'pressure_unit') }} |
+              {% if state_attr('weather.forecast_home', 'cloud_coverage') is not none -%}
+              | ☁️ Cloud cover | {{ state_attr('weather.forecast_home', 'cloud_coverage') }} % |
+              {%- endif %}
+
+
+              _Updated {{ relative_time(states.weather.forecast_home.last_updated) }} ago_
+
+      # ── Daily forecast ───────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Daily forecast
+            forecast_type: daily
+            show_current: true
+            show_forecast: true
+            secondary_info_attribute: humidity
+
+      # ── Hourly forecast (full width → most hours, with precip bars) ─
+      - type: grid
+        column_span: 2
+        cards:
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Hourly forecast (next hours)
+            forecast_type: hourly
+            show_current: false
+            show_forecast: true
+            grid_options:
+              columns: full

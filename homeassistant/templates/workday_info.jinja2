@@ -1,0 +1,24 @@
+{# ── binary_sensor.workday_sensor ────────────────────────────────────────────
+   Shows sensor configuration and today's result.
+   The holiday list below is hardcoded for 2026 (HU) for reference — the
+   sensor uses the same source (Python `holidays` library) internally.
+#}
+{%- set ws = 'binary_sensor.workday_sensor' -%}
+
+── binary_sensor.workday_sensor ─────────────────────────
+Today      : {{ 'working day' if is_state(ws, 'on') else 'non-working day' }}
+Workdays   : {{ state_attr(ws, 'workdays') }}
+Excludes   : {{ state_attr(ws, 'excludes') }}
+
+2026 Hungarian public holidays (reference):
+  2026-01-01  Thu  New Year's Day
+  2026-03-15  Sun  National Day (March 15)
+  2026-04-03  Fri  Good Friday
+  2026-04-06  Mon  Easter Monday
+  2026-05-01  Fri  Labour Day
+  2026-05-25  Mon  Whit Monday
+  2026-08-20  Thu  State Foundation Day
+  2026-10-23  Fri  National Day (October 23)
+  2026-11-01  Sun  All Saints' Day
+  2026-12-25  Fri  Christmas Day
+  2026-12-26  Sat  Second Day of Christmas
