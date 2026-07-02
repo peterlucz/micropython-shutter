@@ -8,7 +8,7 @@
 #     packages: !include_dir_named packages
 #
 # Prerequisites:
-#   - OpenWeatherMap integration named "owm" (entity: weather.forecast_home)
+#   - Met.no integration (entity: weather.forecast_home)
 #   - Workday binary sensor set up for Hungary (binary_sensor.workday_sensor)
 #   - Cover entities created via Pico MQTT Discovery
 #   - Cover groups created via UI — entity IDs must match the CONFIGURE comments:
@@ -234,7 +234,7 @@ automation:
         event: sunset
     action:
       - delay:
-          minutes: "{{ states('input_number.evening_delayed_offset_min') | int(20) }}"
+          minutes: "{{ states('input_number.evening_delayed_offset_min') | float(20) | int }}"
 
       - action: cover.set_cover_position
         target:
@@ -259,13 +259,13 @@ automation:
              > states('input_number.night_vent_temp_threshold') | float(22) }}
 
       - delay:
-          minutes: "{{ states('input_number.night_vent_offset_min') | int(45) }}"
+          minutes: "{{ states('input_number.night_vent_offset_min') | float(45) | int }}"
 
       - action: cover.set_cover_position
         target:
           entity_id: cover.shutters_night_ventilation   # CONFIGURE
         data:
-          position: "{{ states('input_number.night_vent_position') | int(55) }}"
+          position: "{{ states('input_number.night_vent_position') | float(55) | int }}"
 
 
   # ── 6. Update daily forecast temperatures ─────────────────────────────────
