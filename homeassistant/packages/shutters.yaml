@@ -145,6 +145,39 @@ input_number:
 
 
 
+# ── Template sensors ──────────────────────────────────────────────────────────
+
+# Single source of truth for the morning open position, used by automations
+# 1 and 2. Recomputes whenever a helper changes, so it can be watched and
+# tuned live on a dashboard.
+#
+#   tempmax <= temp_full_open  →  100%
+#   tempmax >= temp_min_open   →  shutter_min_position %
+#   in between                 →  linear
+#
+# `span` is floored at 0.1 °C so equal thresholds degrade to a step function
+# instead of dividing by zero.
+#
+# NOTE: deploy_ha.py cannot push `template:` sections (config-entry entities);
+# until it learns the config-flow API this section only works via a file-based
+# package deploy.
+
+template:
+  - sensor:
+      - name: "Shutter open level"
+        unique_id: shutter_open_level
+        unit_of_measurement: "%"
+        icon: mdi:window-shutter-settings
+        state: >-
+          {% set tempmax   = states('input_number.today_temp_max') | float(20) %}
+          {% set temp_low  = states('input_number.shutter_temp_full_open') | float(25) %}
+          {% set temp_high = states('input_number.shutter_temp_min_open') | float(35) %}
+          {% set pos_min   = states('input_number.shutter_min_position') | float(35) %}
+          {% set span = [temp_high - temp_low, 0.1] | max %}
+          {{ [[100 - (tempmax - temp_low) / span * (100 - pos_min),
+               pos_min] | max, 100] | min | round | int }}
+
+
 # ── Automations ───────────────────────────────────────────────────────────────
 
 automation:
@@ -155,12 +188,7 @@ automation:
   #   - time trigger fires at 06:30 → sun condition passes only if sunrise already passed
   #   - sunrise trigger fires at sunrise → time condition passes only if it's past 06:30
   #
-  # Position formula (linear between thresholds, clamped):
-  #   tempmax <= temp_full_open  →  100%
-  #   tempmax >= temp_min_open   →  shutter_min_position %
-  #   in between                 →  linear
-  # `span` is floored at 0.1 °C so equal thresholds degrade to a step
-  # function instead of dividing by zero.
+  # Open position comes from sensor.shutter_open_level (template sensor above).
 
   - id: shutters_workday_morning
     alias: "Shutters: workday morning open"
@@ -179,26 +207,16 @@ automation:
       - condition: sun
         after: sunrise
     action:
-      - variables:
-          tempmax: "{{ states('input_number.today_temp_max') | float(20) }}"
-          temp_low: "{{ states('input_number.shutter_temp_full_open') | float(25) }}"
-          temp_high: "{{ states('input_number.shutter_temp_min_open') | float(35) }}"
-          pos_min: "{{ states('input_number.shutter_min_position') | float(35) }}"
-          span: "{{ [temp_high - temp_low, 0.1] | max }}"
-          position: >-
-            {{ [[100 - (tempmax - temp_low) / span * (100 - pos_min),
-                 pos_min] | max, 100] | min | round | int }}
-
       - action: cover.set_cover_position
         target:
           entity_id: cover.shutters_workday_morning   # CONFIGURE: match your group entity ID
         data:
-          position: "{{ position }}"
+          position: "{{ states('sensor.shutter_open_level') | float(100) | int }}"
 
 
   # ── 2. Weekend morning open ───────────────────────────────────────────────
   # Opens at the configured time on weekends and Hungarian public holidays.
-  # Same position formula as workday morning.
+  # Open position comes from sensor.shutter_open_level (template sensor above).
 
   - id: shutters_weekend_morning
     alias: "Shutters: weekend morning open"
@@ -210,21 +228,11 @@ automation:
         entity_id: binary_sensor.workday_sensor
         state: "off"
     action:
-      - variables:
-          tempmax: "{{ states('input_number.today_temp_max') | float(20) }}"
-          temp_low: "{{ states('input_number.shutter_temp_full_open') | float(25) }}"
-          temp_high: "{{ states('input_number.shutter_temp_min_open') | float(35) }}"
-          pos_min: "{{ states('input_number.shutter_min_position') | float(35) }}"
-          span: "{{ [temp_high - temp_low, 0.1] | max }}"
-          position: >-
-            {{ [[100 - (tempmax - temp_low) / span * (100 - pos_min),
-                 pos_min] | max, 100] | min | round | int }}
-
       - action: cover.set_cover_position
         target:
           entity_id: cover.shutters_weekend_morning   # CONFIGURE: match your group entity ID
         data:
-          position: "{{ position }}"
+          position: "{{ states('sensor.shutter_open_level') | float(100) | int }}"
 
 
   # ── 3. Evening close ──────────────────────────────────────────────────────
