@@ -1,6 +1,6 @@
 MQTT_SERVER      = '192.168.1.5'
-STATUS_TOPIC     = 'pico/status'
-CONFIG_TOPIC     = 'pico/config'
+# Status + config topics are derived from the MAC-based DEVICE_ID in main.py
+# ('{DEVICE_ID}/status', '{DEVICE_ID}/config') so multiple boards can coexist.
 DEVICES_FILE     = 'devices.json'
 DISCOVERY_PREFIX = 'homeassistant'
 KEEPALIVE        = 120

@@ -24,7 +24,7 @@ Each shutter uses two relays (up + down) with mutual exclusion enforced in firmw
 ```
 micropython/shutter/
 ├── main.py             # Application: async tasks, device handlers, MQTT logic
-├── config.py           # Deployment parameters: broker IP, topic names
+├── config.py           # Deployment parameters: broker IP, discovery prefix
 ├── devices.json        # Device layout: relay pins, type, timing
 ├── mqtt_local.py       # Pico W WiFi/MQTT setup and LED definitions
 ├── mqtt_as.py          # Third-party async MQTT client library (do not modify)
@@ -113,11 +113,13 @@ mpremote reset
 
 Timing-only changes (`time_up` / `time_down`) also require a reboot to take effect.
 
-For a custom layout, publish any valid `devices.json` JSON to the `pico/config` topic with `retain=true`:
+For a custom layout, publish any valid `devices.json` JSON to the board's `{device-id}/config` topic with `retain=true`:
 
 ```bash
-mosquitto_pub -h <broker-ip> -u <user> -P <pass> -t pico/config -r -m '{"devices": [...]}'
+mosquitto_pub -h <broker-ip> -u <user> -P <pass> -t pico_relay_ab12cd/config -r -m '{"devices": [...]}'
 ```
+
+(`update_config.sh` discovers the device id automatically when only one board is on the broker; pass it as the second argument otherwise.)
 
 ## Home Assistant Setup
 
@@ -127,28 +129,28 @@ No YAML configuration needed. The Pico publishes MQTT Discovery messages on ever
 2. In HA: **Settings → Devices & Services → MQTT** — the device appears as `Pico Relay XXXXXX` (last 3 bytes of its MAC address)
 3. Cover and Switch entities are created automatically and grouped under one HA device
 
-**Running multiple Picos**: no extra config needed — each board derives a unique device ID from its WiFi MAC address automatically.
+**Running multiple Picos**: no extra config needed — each board derives a unique device ID from its WiFi MAC address and uses it as its MQTT topic namespace, so boards never collide on the broker.
 
 ## MQTT Topics
 
+All topics are prefixed with the board's MAC-derived device id (e.g. `pico_relay_ab12cd`):
+
 | Topic | Direction | Payload |
 |-------|-----------|---------|
-| `shutter/{id}/set` | HA → Pico | `OPEN` / `CLOSE` / `STOP` |
-| `shutter/{id}/set_position` | HA → Pico | `0`–`100` |
-| `shutter/{id}/state` | Pico → HA | `{"state": "open", "position": 75}` |
-| `switch/{id}/set` | HA → Pico | `ON` / `OFF` |
-| `switch/{id}/state` | Pico → HA | `ON` / `OFF` |
-| `pico/config` | HA → Pico | Full `devices.json` JSON (retain=true) |
-| `pico/status` | Pico → HA | `online` / `offline` |
+| `{device-id}/shutter/{id}/set` | HA → Pico | `OPEN` / `CLOSE` / `STOP` |
+| `{device-id}/shutter/{id}/set_position` | HA → Pico | `0`–`100` |
+| `{device-id}/shutter/{id}/state` | Pico → HA | `{"state": "open", "position": 75}` |
+| `{device-id}/switch/{id}/set` | HA → Pico | `ON` / `OFF` |
+| `{device-id}/switch/{id}/state` | Pico → HA | `ON` / `OFF` |
+| `{device-id}/config` | HA → Pico | Full `devices.json` JSON (retain=true) |
+| `{device-id}/status` | Pico → HA | `online` / `offline` (retained) |
 
 ## Configuration
 
-Edit `config.py` to change the MQTT broker IP or topic names:
+Edit `config.py` to change the MQTT broker IP:
 
 ```python
 MQTT_SERVER      = '192.168.1.5'   # MQTT broker IP
-STATUS_TOPIC     = 'pico/status'
-CONFIG_TOPIC     = 'pico/config'
 DEVICES_FILE     = 'devices.json'
 DISCOVERY_PREFIX = 'homeassistant'
 ```

@@ -1,7 +1,6 @@
 from mqtt_as import MQTTClient
 from mqtt_local import wifi_led, blue_led, config
-from config import (STATUS_TOPIC, CONFIG_TOPIC, DEVICES_FILE,
-                    DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG)
+from config import DEVICES_FILE, DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG
 import uasyncio as asyncio
 import machine
 from machine import Pin
@@ -10,9 +9,16 @@ import ujson
 import utime
 import gc
 
-# Set in main() from the WiFi MAC address — e.g. 'pico_relay_ab12cd'.
-DEVICE_ID   = None
-DEVICE_NAME = None
+# Derived from the WiFi MAC address — e.g. 'pico_relay_ab12cd'. DEVICE_ID is
+# also the MQTT topic namespace ('{DEVICE_ID}/shutter/0/set', …) so several
+# boards can share one broker without their topics colliding.
+_wlan = network.WLAN(network.STA_IF)
+_wlan.active(True)
+_suffix = ''.join('{:02x}'.format(b) for b in _wlan.config('mac')[-3:])
+DEVICE_ID    = 'pico_relay_{}'.format(_suffix)
+DEVICE_NAME  = 'Pico Relay {}'.format(_suffix.upper())
+STATUS_TOPIC = '{}/status'.format(DEVICE_ID)
+CONFIG_TOPIC = '{}/config'.format(DEVICE_ID)
 
 # Keyed by device id, populated from devices.json on boot.
 devices      = {}
@@ -58,11 +64,13 @@ def apply_mqtt_config(payload):
 
 async def publish_shutter_state(device, state):
     payload = ujson.dumps({'state': state, 'position': device['position']})
-    await client.publish('shutter/{}/state'.format(device['id']), payload, qos=1)
+    await client.publish('{}/shutter/{}/state'.format(DEVICE_ID, device['id']),
+                         payload, qos=1)
 
 
 async def publish_switch_state(device, state):
-    await client.publish('switch/{}/state'.format(device['id']), state, qos=1)
+    await client.publish('{}/switch/{}/state'.format(DEVICE_ID, device['id']),
+                         state, qos=1)
 
 
 async def publish_discovery():
@@ -74,11 +82,11 @@ async def publish_discovery():
             payload = ujson.dumps({
                 'name':        'Shutter {}'.format(dev_id),
                 'uniq_id':     '{}_{}_shutter_{}'.format(DEVICE_ID, DEVICE_NAME.replace(' ', '_'), dev_id),
-                'cmd_t':       'shutter/{}/set'.format(dev_id),
-                'set_pos_t':   'shutter/{}/set_position'.format(dev_id),
-                'stat_t':      'shutter/{}/state'.format(dev_id),
+                'cmd_t':       '{}/shutter/{}/set'.format(DEVICE_ID, dev_id),
+                'set_pos_t':   '{}/shutter/{}/set_position'.format(DEVICE_ID, dev_id),
+                'stat_t':      '{}/shutter/{}/state'.format(DEVICE_ID, dev_id),
                 'val_tpl':     '{{ value_json.state }}',
-                'pos_t':       'shutter/{}/state'.format(dev_id),
+                'pos_t':       '{}/shutter/{}/state'.format(DEVICE_ID, dev_id),
                 'pos_tpl':     '{{ value_json.position }}',
                 'avty_t':      STATUS_TOPIC,
                 'pl_avail':    'online',
@@ -100,8 +108,8 @@ async def publish_discovery():
             payload = ujson.dumps({
                 'name':        'Switch {}'.format(dev_id),
                 'uniq_id':     '{}_{}_switch_{}'.format(DEVICE_ID, DEVICE_NAME.replace(' ', '_'), dev_id),
-                'cmd_t':       'switch/{}/set'.format(dev_id),
-                'stat_t':      'switch/{}/state'.format(dev_id),
+                'cmd_t':       '{}/switch/{}/set'.format(DEVICE_ID, dev_id),
+                'stat_t':      '{}/switch/{}/state'.format(DEVICE_ID, dev_id),
                 'pl_on':       'ON',
                 'pl_off':      'OFF',
                 'avty_t':      STATUS_TOPIC,
@@ -249,18 +257,19 @@ async def messages(client):
                 apply_mqtt_config(payload)
                 continue
 
+            # Command topics: {DEVICE_ID}/{shutter|switch}/{id}/{command}
             parts    = topic_str.split('/')
-            if len(parts) < 3:
+            if len(parts) < 4 or parts[0] != DEVICE_ID:
                 continue
-            dev_type = parts[0]
-            device   = devices.get(int(parts[1]))
+            dev_type = parts[1]
+            device   = devices.get(int(parts[2]))
             if device is None:
                 continue
 
             if dev_type == 'shutter' and device['type'] == 'shutter':
-                await handle_shutter(device, parts[2], payload)
+                await handle_shutter(device, parts[3], payload)
             elif dev_type == 'switch' and device['type'] == 'switch':
-                await handle_switch(device, parts[2], payload)
+                await handle_switch(device, parts[3], payload)
         except Exception as e:
             print('Message error: {}'.format(e))
 
@@ -286,10 +295,10 @@ async def up(client):
         await client.subscribe(CONFIG_TOPIC, 1)
         for dev_id, device in devices.items():
             if device['type'] == 'shutter':
-                await client.subscribe('shutter/{}/set_position'.format(dev_id), 1)
-                await client.subscribe('shutter/{}/set'.format(dev_id), 1)
+                await client.subscribe('{}/shutter/{}/set_position'.format(DEVICE_ID, dev_id), 1)
+                await client.subscribe('{}/shutter/{}/set'.format(DEVICE_ID, dev_id), 1)
             elif device['type'] == 'switch':
-                await client.subscribe('switch/{}/set'.format(dev_id), 1)
+                await client.subscribe('{}/switch/{}/set'.format(DEVICE_ID, dev_id), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -297,11 +306,6 @@ async def up(client):
 # ---------------------------------------------------------------------------
 
 async def main(client):
-    global DEVICE_ID, DEVICE_NAME
-    _mac    = network.WLAN(network.STA_IF).config('mac')
-    _suffix = ''.join('{:02x}'.format(b) for b in _mac[-3:])
-    DEVICE_ID   = 'pico_relay_{}'.format(_suffix)
-    DEVICE_NAME = 'Pico Relay {}'.format(_suffix.upper())
     print('Device: {} ({})'.format(DEVICE_NAME, DEVICE_ID))
 
     device_list = load_config()
@@ -340,7 +344,9 @@ async def main(client):
         await client.publish(STATUS_TOPIC, 'online', retain=True, qos=1)
 
 
-config['will']      = (STATUS_TOPIC, 'offline', False, 0)
+# Will is retained so HA sees 'offline' even if it (re)subscribes after the
+# board has already died; the periodic 'online' publish is retained likewise.
+config['will']      = (STATUS_TOPIC, 'offline', True, 0)
 config['keepalive'] = KEEPALIVE
 config['queue_len'] = QUEUE_LEN
 MQTTClient.DEBUG    = DEBUG
