@@ -257,6 +257,12 @@ async def messages(client):
                 apply_mqtt_config(payload)
                 continue
 
+            # Only the config topic is legitimately retained. A retained
+            # command would be replayed on every reconnect and physically
+            # move a shutter each time — drop it.
+            if retained:
+                continue
+
             # Command topics: {DEVICE_ID}/{shutter|switch}/{id}/{command}
             parts    = topic_str.split('/')
             if len(parts) < 4 or parts[0] != DEVICE_ID:
