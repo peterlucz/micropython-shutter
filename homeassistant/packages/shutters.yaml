@@ -8,8 +8,8 @@
 #     packages: !include_dir_named packages
 #
 # Prerequisites:
-#   - OpenWeatherMap integration named "owm" (entity: weather.owm)
-#   - Workday binary sensor set up for Hungary (via this file or UI integration)
+#   - Met.no integration (entity: weather.forecast_home)
+#   - Workday binary sensor set up for Hungary (binary_sensor.workday_sensor)
 #   - Cover entities created via Pico MQTT Discovery
 #   - Cover groups created via UI — entity IDs must match the CONFIGURE comments:
 #       cover.shutters_workday_morning
@@ -108,16 +108,26 @@ input_number:
     icon: mdi:window-shutter-open
     mode: box
 
+  # Populated by the "update daily forecast temperatures" automation below —
+  # not tuning knobs. No `initial:` so a stale value never masks a failed update.
+  today_temp_max:
+    name: "Today — forecast max temperature"
+    min: -30
+    max: 50
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+    mode: box
 
-# ── Workday sensor (Hungary) ──────────────────────────────────────────────────
-# Creates binary_sensor.workday_hu — ON on working days, OFF on weekends and
-# Hungarian public holidays. If this fails in newer HA versions, set up the
-# Workday integration via UI instead (Settings → Integrations → Workday).
+  tonight_temp_min:
+    name: "Tonight — forecast min temperature (coming night)"
+    min: -30
+    max: 50
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+    mode: box
 
-binary_sensor:
-  - platform: workday
-    country: HU
-    name: "Workday HU"
 
 
 # ── Automations ───────────────────────────────────────────────────────────────
@@ -144,7 +154,7 @@ automation:
         event: sunrise
     condition:
       - condition: state
-        entity_id: binary_sensor.workday_hu
+        entity_id: binary_sensor.workday_sensor
         state: "on"
       - condition: template
         value_template: >-
@@ -152,15 +162,8 @@ automation:
       - condition: sun
         after: sunrise
     action:
-      - action: weather.get_forecast
-        target:
-          entity_id: weather.owm
-        data:
-          type: daily
-        response_variable: forecast
-
       - variables:
-          tempmax: "{{ forecast.forecast[0].temperature | float(20) }}"
+          tempmax: "{{ states('input_number.today_temp_max') | float(20) }}"
           temp_low: "{{ states('input_number.shutter_temp_full_open') | float(25) }}"
           temp_high: "{{ states('input_number.shutter_temp_min_open') | float(35) }}"
           pos_min: "{{ states('input_number.shutter_min_position') | float(35) }}"
@@ -186,18 +189,11 @@ automation:
         at: input_datetime.weekend_morning_time
     condition:
       - condition: state
-        entity_id: binary_sensor.workday_hu
+        entity_id: binary_sensor.workday_sensor
         state: "off"
     action:
-      - action: weather.get_forecast
-        target:
-          entity_id: weather.owm
-        data:
-          type: daily
-        response_variable: forecast
-
       - variables:
-          tempmax: "{{ forecast.forecast[0].temperature | float(20) }}"
+          tempmax: "{{ states('input_number.today_temp_max') | float(20) }}"
           temp_low: "{{ states('input_number.shutter_temp_full_open') | float(25) }}"
           temp_high: "{{ states('input_number.shutter_temp_min_open') | float(35) }}"
           pos_min: "{{ states('input_number.shutter_min_position') | float(35) }}"
@@ -238,7 +234,7 @@ automation:
         event: sunset
     action:
       - delay:
-          minutes: "{{ states('input_number.evening_delayed_offset_min') | int(20) }}"
+          minutes: "{{ states('input_number.evening_delayed_offset_min') | float(20) | int }}"
 
       - action: cover.set_cover_position
         target:
@@ -257,23 +253,72 @@ automation:
       - platform: sun
         event: sunset
     action:
-      - action: weather.get_forecast
-        target:
-          entity_id: weather.owm
-        data:
-          type: daily
-        response_variable: forecast
-
       - condition: template
         value_template: >-
-          {{ forecast.forecast[0].templow | float(0)
+          {{ states('input_number.tonight_temp_min') | float(0)
              > states('input_number.night_vent_temp_threshold') | float(22) }}
 
       - delay:
-          minutes: "{{ states('input_number.night_vent_offset_min') | int(45) }}"
+          minutes: "{{ states('input_number.night_vent_offset_min') | float(45) | int }}"
 
       - action: cover.set_cover_position
         target:
           entity_id: cover.shutters_night_ventilation   # CONFIGURE
         data:
-          position: "{{ states('input_number.night_vent_position') | int(55) }}"
+          position: "{{ states('input_number.night_vent_position') | float(55) | int }}"
+
+
+  # ── 6. Update daily forecast temperatures ─────────────────────────────────
+  # Writes today's forecast daytime high into today_temp_max (from the daily
+  # forecast) and the COMING night's low into tonight_temp_min (minimum of the
+  # hourly forecast over the next 18 h, so it's always the upcoming night rather
+  # than a low that already passed this morning). Runs at HA start and hourly.
+
+  - id: shutters_update_daily_temps
+    alias: "Shutters: update daily forecast temperatures"
+    trigger:
+      - platform: homeassistant
+        event: start
+      - platform: time_pattern
+        hours: "/1"
+    action:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: daily
+        response_variable: daily
+
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: hourly
+        response_variable: hourly
+
+      # Skip if either forecast is empty (e.g. right after restart)
+      - condition: template
+        value_template: >-
+          {{ daily['weather.forecast_home'].forecast | count > 0
+             and hourly['weather.forecast_home'].forecast | count > 0 }}
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.today_temp_max
+        data:
+          value: "{{ daily['weather.forecast_home'].forecast[0].temperature | float }}"
+
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.tonight_temp_min
+        data:
+          value: >-
+            {% set ns = namespace(low = none) %}
+            {% set cutoff = as_timestamp(now()) + 18 * 3600 %}
+            {% for f in hourly['weather.forecast_home'].forecast %}
+              {% if as_timestamp(f.datetime) <= cutoff %}
+                {% set ns.low = f.temperature if ns.low is none
+                                else [ns.low, f.temperature] | min %}
+              {% endif %}
+            {% endfor %}
+            {{ (ns.low | float) | round(1) }}

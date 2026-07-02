@@ -1,0 +1,94 @@
+# Shutter test dashboard — validate the simulated shutter schedule before any
+# real cover is driven. The four input_number.shutter_pos_* helpers are written
+# by the "Shutters test: …" automations; watch their history over a few days.
+#
+# Built-in cards only (no HACS). "sections" view requires HA 2024.3+.
+# Pushed to HA at /shutters-test via push_dashboard.py.
+
+title: Shutter test
+views:
+  - title: Shutter test
+    path: shutter-test
+    icon: mdi:window-shutter-cog
+    type: sections
+    max_columns: 2
+    sections:
+      # ── Current simulated positions ──────────────────────────────
+      - type: grid
+        cards:
+          - type: heading
+            heading: Current positions (simulated)
+          - type: gauge
+            entity: input_number.shutter_pos_normal
+            name: Normal
+            min: 0
+            max: 100
+            needle: true
+            severity: {green: 0, yellow: 1, red: 90}
+          - type: gauge
+            entity: input_number.shutter_pos_delayed
+            name: Delayed
+            min: 0
+            max: 100
+            needle: true
+          - type: gauge
+            entity: input_number.shutter_pos_ventilation
+            name: Ventilation
+            min: 0
+            max: 100
+            needle: true
+          - type: gauge
+            entity: input_number.shutter_pos_kids
+            name: Kids
+            min: 0
+            max: 100
+            needle: true
+
+      # ── History of the four signals (3 days) ─────────────────────
+      - type: grid
+        column_span: 2
+        cards:
+          - type: history-graph
+            title: Shutter positions — 3-day history (%)
+            hours_to_show: 72
+            entities:
+              - entity: input_number.shutter_pos_normal
+                name: Normal
+              - entity: input_number.shutter_pos_delayed
+                name: Delayed
+              - entity: input_number.shutter_pos_ventilation
+                name: Ventilation
+              - entity: input_number.shutter_pos_kids
+                name: Kids
+
+      # ── Forecast inputs driving the schedule ─────────────────────
+      - type: grid
+        column_span: 2
+        cards:
+          - type: history-graph
+            title: Forecast inputs & ventilation decision (3 days)
+            hours_to_show: 72
+            entities:
+              - entity: input_number.today_temp_max
+                name: Forecast max
+              - entity: input_number.tonight_temp_min
+                name: Coming-night min
+              - entity: binary_sensor.ventilation_recommended
+                name: Ventilation recommended
+
+      # ── Manual tuning knobs ──────────────────────────────────────
+      - type: grid
+        cards:
+          - type: entities
+            title: Manual settings — tune and watch the effect
+            entities:
+              - input_datetime.open_time_workday
+              - input_datetime.open_time_holiday
+              - input_datetime.kids_close_time
+              - input_number.delayed_close_offset
+              - input_number.ventilation_close_level
+              - type: section
+                label: Temperature-based open level
+              - input_number.temp_full_open
+              - input_number.temp_min_open
+              - input_number.min_open_position

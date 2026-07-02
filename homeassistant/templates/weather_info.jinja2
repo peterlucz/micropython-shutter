@@ -1,0 +1,30 @@
+{# ── weather.forecast_home (Met.no) ──────────────────────────────────────────
+   Reads current conditions and today's forecast high/low.
+   Note: forecast attribute was deprecated in HA 2023.9. If it shows "not
+   available" below, forecasts can only be retrieved via weather.get_forecast
+   in automations — not in the template editor.
+#}
+{%- set w = 'weather.forecast_home' -%}
+{%- set unit = state_attr(w, 'temperature_unit') | default('°C') -%}
+{%- set fc = state_attr(w, 'forecast') -%}
+
+── weather.forecast_home (Met.no) ───────────────────────
+{%- if is_state(w, 'unknown') or is_state(w, 'unavailable') %}
+⚠️  State is {{ states(w) }} — Met.no is not fetching data.
+    Check Settings → Integrations → Met.no for errors.
+{%- else %}
+State      : {{ states(w) }}
+Temperature: {{ state_attr(w, 'temperature') }} {{ unit }}
+Humidity   : {{ state_attr(w, 'humidity') }} %
+Wind       : {{ state_attr(w, 'wind_speed') }} {{ state_attr(w, 'wind_speed_unit') | default('km/h') }}
+
+Today's forecast:
+{%- if fc and fc | count > 0 %}
+  High : {{ fc[0].temperature }} {{ unit }}
+  Low  : {{ fc[0].templow }} {{ unit }}
+  Cond : {{ fc[0].condition }}
+{%- else %}
+  ⚠️  Not available in the template editor — forecast attribute is deprecated.
+      Automations use weather.get_forecast (action call) which works fine.
+{%- endif %}
+{%- endif %}
