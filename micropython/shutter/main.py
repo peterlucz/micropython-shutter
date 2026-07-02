@@ -172,7 +172,7 @@ async def shutter_move(device, target):
         pin_active.low()
         device['position'] = target
         save_config()
-        end_state = 'open' if target == 100 else 'closed' if target == 0 else 'open'
+        end_state = 'closed' if target == 0 else 'open'
         await publish_shutter_state(device, end_state)
     except asyncio.CancelledError:
         pin_active.low()
@@ -215,7 +215,7 @@ async def cancel_active(dev_id):
         task.cancel()
         try:
             await task
-        except:
+        except asyncio.CancelledError:
             pass
         active_tasks[dev_id] = None
 
