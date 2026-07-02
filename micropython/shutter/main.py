@@ -3,6 +3,7 @@ from mqtt_local import wifi_led, blue_led, config
 from config import (STATUS_TOPIC, CONFIG_TOPIC, DEVICES_FILE,
                     DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG)
 import uasyncio as asyncio
+import machine
 from machine import Pin
 import network
 import ujson
@@ -305,11 +306,21 @@ async def main(client):
 
     device_list = load_config()
 
-    try:
-        await client.connect()
-    except OSError:
-        print('Connection failed.')
-        return
+    # Retry until WiFi/broker come up — after a power outage the Pico boots
+    # long before the router and broker do, and giving up here would leave
+    # the relays dead until a manual power cycle. Hard-reset periodically in
+    # case the WiFi chip is wedged in a state a fresh connect can't clear.
+    attempts = 0
+    while True:
+        try:
+            await client.connect()
+            break
+        except OSError:
+            attempts += 1
+            print('Connection failed (attempt {}) — retrying in 10 s.'.format(attempts))
+            if attempts >= 30:
+                machine.reset()
+            await asyncio.sleep(10)
 
     for d in device_list:
         dev_id = d['id']
