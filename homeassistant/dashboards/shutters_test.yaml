@@ -14,6 +14,9 @@ views:
     max_columns: 2
     sections:
       # ── Current simulated positions ──────────────────────────────
+      # Gauge colors approximate the series colors of the history chart
+      # below (built-in gauges only offer blue/yellow/red/green, set via
+      # a single full-range severity band; thresholds of 200 never draw).
       - type: grid
         cards:
           - type: heading
@@ -24,25 +27,27 @@ views:
             min: 0
             max: 100
             needle: true
-            severity: {green: 0, yellow: 1, red: 90}
           - type: gauge
             entity: input_number.shutter_pos_delayed
             name: Delayed
             min: 0
             max: 100
             needle: true
+            severity: {yellow: 0, green: 200, red: 200}
           - type: gauge
             entity: input_number.shutter_pos_ventilation
             name: Ventilation
             min: 0
             max: 100
             needle: true
+            severity: {red: 0, green: 200, yellow: 200}
           - type: gauge
             entity: input_number.shutter_pos_kids
             name: Kids
             min: 0
             max: 100
             needle: true
+            severity: {green: 0, yellow: 200, red: 200}
 
       # ── History of the four signals (3 days) ─────────────────────
       - type: grid
