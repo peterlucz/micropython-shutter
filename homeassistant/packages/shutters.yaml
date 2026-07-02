@@ -37,6 +37,21 @@ input_datetime:
     initial: "08:10:00"
     icon: mdi:alarm-snooze
 
+  # Written by the automations below at sunset — not tuning knobs. They hold
+  # the computed action datetimes so the schedule survives HA restarts and
+  # automation.reload (a plain delay: step would be silently cancelled).
+  evening_delayed_close_at:
+    name: "Evening delayed close — scheduled for"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-end
+
+  night_vent_open_at:
+    name: "Night ventilation — scheduled for"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-start
+
 input_number:
   shutter_temp_full_open:
     name: "Shutter — temperature for full open"
@@ -230,46 +245,89 @@ automation:
 
   # ── 4. Evening close — delayed ────────────────────────────────────────────
   # Closes shutters at sunset + configurable offset (default 20 min).
+  # Two triggers instead of a delay: sunset writes the target datetime into a
+  # helper, and a time trigger fires on it. A delay: step would be cancelled
+  # by automation.reload (deploy_ha.py runs it after every deploy) or an HA
+  # restart; the time trigger is re-registered from the helper and survives.
 
   - id: shutters_evening_close_delayed
     alias: "Shutters: evening close (delayed)"
     trigger:
       - platform: sun
         event: sunset
+        id: schedule
+      - platform: time
+        at: input_datetime.evening_delayed_close_at
+        id: close
     action:
-      - delay:
-          minutes: "{{ states('input_number.evening_delayed_offset_min') | float(20) | int }}"
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: schedule
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.evening_delayed_close_at
+                data:
+                  datetime: >-
+                    {{ (now() + timedelta(minutes =
+                        states('input_number.evening_delayed_offset_min') | float(20) | int))
+                       .strftime('%Y-%m-%d %H:%M:%S') }}
 
-      - action: cover.set_cover_position
-        target:
-          entity_id: cover.shutters_evening_delayed   # CONFIGURE
-        data:
-          position: 0
+          - conditions:
+              - condition: trigger
+                id: close
+            sequence:
+              - action: cover.set_cover_position
+                target:
+                  entity_id: cover.shutters_evening_delayed   # CONFIGURE
+                data:
+                  position: 0
 
 
   # ── 5. Night ventilation ──────────────────────────────────────────────────
-  # At sunset, fetches tonight's forecast low. If it exceeds the threshold,
-  # waits the configured offset then opens shutters to the configured position.
+  # At sunset, if tonight's forecast low exceeds the threshold, schedules the
+  # vent open at sunset + offset via a datetime helper (same restart-safe
+  # pattern as #4). On cool nights the helper keeps its past value, so the
+  # time trigger simply never fires.
 
   - id: shutters_night_ventilation
     alias: "Shutters: night ventilation"
     trigger:
       - platform: sun
         event: sunset
+        id: schedule
+      - platform: time
+        at: input_datetime.night_vent_open_at
+        id: open
     action:
-      - condition: template
-        value_template: >-
-          {{ states('input_number.tonight_temp_min') | float(0)
-             > states('input_number.night_vent_temp_threshold') | float(22) }}
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: schedule
+              - condition: template
+                value_template: >-
+                  {{ states('input_number.tonight_temp_min') | float(0)
+                     > states('input_number.night_vent_temp_threshold') | float(22) }}
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.night_vent_open_at
+                data:
+                  datetime: >-
+                    {{ (now() + timedelta(minutes =
+                        states('input_number.night_vent_offset_min') | float(45) | int))
+                       .strftime('%Y-%m-%d %H:%M:%S') }}
 
-      - delay:
-          minutes: "{{ states('input_number.night_vent_offset_min') | float(45) | int }}"
-
-      - action: cover.set_cover_position
-        target:
-          entity_id: cover.shutters_night_ventilation   # CONFIGURE
-        data:
-          position: "{{ states('input_number.night_vent_position') | float(55) | int }}"
+          - conditions:
+              - condition: trigger
+                id: open
+            sequence:
+              - action: cover.set_cover_position
+                target:
+                  entity_id: cover.shutters_night_ventilation   # CONFIGURE
+                data:
+                  position: "{{ states('input_number.night_vent_position') | float(55) | int }}"
 
 
   # ── 6. Update daily forecast temperatures ─────────────────────────────────
