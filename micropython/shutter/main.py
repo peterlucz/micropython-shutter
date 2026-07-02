@@ -133,15 +133,24 @@ async def shutter_move(device, target):
     if target > start:
         pin_active = device['pin_up']
         pin_idle   = device['pin_down']
-        move_time  = int(device['time_up'] * (target - start) / 100)
+        travel     = device['time_up']
         direction  = 1
         move_state = 'opening'
     else:
         pin_active = device['pin_down']
         pin_idle   = device['pin_up']
-        move_time  = int(device['time_down'] * (start - target) / 100)
+        travel     = device['time_down']
         direction  = -1
         move_state = 'closing'
+
+    if target == 0 or target == 100:
+        # Re-home at the end stops: drive for the full travel time plus 10%
+        # regardless of the believed position. The motor's limit switch stops
+        # the shutter, so accumulated timing drift is cleared on every full
+        # open/close instead of building up forever.
+        move_time = travel * 11 // 10
+    else:
+        move_time = travel * abs(target - start) // 100
 
     # Safety: never activate if either relay in the pair is already on.
     if pin_active.value() or pin_idle.value():
@@ -160,7 +169,9 @@ async def shutter_move(device, target):
     except asyncio.CancelledError:
         pin_active.low()
         elapsed = utime.ticks_diff(utime.ticks_ms(), t0)
-        delta = round(elapsed / move_time * abs(target - start))
+        # Estimate from the travel rate (% per ms), not the commanded move
+        # time — re-homing moves run longer than the position delta implies.
+        delta = round(elapsed * 100 / travel)
         device['position'] = max(0, min(100, start + direction * delta))
         save_config()
         await publish_shutter_state(device, 'stopped')
