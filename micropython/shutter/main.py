@@ -324,6 +324,15 @@ async def up(client):
                 await client.subscribe('{}/shutter/{}/set'.format(DEVICE_ID, dev_id), 1)
             elif device['type'] == 'switch':
                 await client.subscribe('{}/switch/{}/set'.format(DEVICE_ID, dev_id), 1)
+        # Publish current states so HA never shows 'unknown' after a broker
+        # reconnect, an HA restart, or a fresh device (state is not retained).
+        for dev_id, device in devices.items():
+            if device['type'] == 'shutter' and active_tasks.get(dev_id) is None:
+                await publish_shutter_state(
+                    device, 'closed' if device['position'] == 0 else 'open')
+            elif device['type'] == 'switch':
+                await publish_switch_state(
+                    device, 'ON' if device['pin'].value() else 'OFF')
 
 
 # ---------------------------------------------------------------------------
