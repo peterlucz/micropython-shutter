@@ -70,7 +70,11 @@ views:
             hours_to_show: 72
             entities:
               - entity: input_number.today_temp_max
-                name: Forecast max
+                name: Max — Met.no (drives rig)
+              - entity: input_number.today_temp_max_openmeteo
+                name: Max — Open-Meteo
+              - entity: input_number.today_temp_max_owm
+                name: Max — OWM (from 3-hourly, decays evenings)
               - entity: input_number.tonight_temp_min
                 name: Coming-night min
               - entity: binary_sensor.ventilation_recommended
