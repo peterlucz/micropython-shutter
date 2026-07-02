@@ -76,7 +76,11 @@ views:
               - entity: input_number.today_temp_max_owm
                 name: Max — OWM (from 3-hourly, decays evenings)
               - entity: input_number.tonight_temp_min
-                name: Coming-night min
+                name: Night min — Met.no (drives rig)
+              - entity: input_number.tonight_temp_min_openmeteo
+                name: Night min — Open-Meteo
+              - entity: input_number.tonight_temp_min_owm
+                name: Night min — OWM (3-hourly)
               - entity: binary_sensor.ventilation_recommended
                 name: Ventilation recommended
 
