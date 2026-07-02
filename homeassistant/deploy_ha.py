@@ -23,7 +23,9 @@ Usage:
 
 Host/token default to 192.168.1.5:8123 and the ./token file next to this script.
 """
-import argparse, base64, json, os, socket, struct, sys, time, urllib.error, urllib.request
+import argparse, json, sys, urllib.error, urllib.request
+
+from ha_ws import WS, load_token
 
 HELPER_DOMAINS = ("input_number", "input_datetime", "input_boolean",
                   "input_select", "input_text", "counter", "timer")
@@ -46,76 +48,6 @@ class Rest:
                 return r.status, (json.loads(raw) if raw.strip() else None)
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode(errors="replace")
-
-
-# ── minimal RFC6455 WebSocket client (from .add_weather_dashboard.py) ────────
-class WS:
-    def __init__(self, host, port, token):
-        self.s = socket.create_connection((host, port), timeout=10)
-        key = base64.b64encode(os.urandom(16)).decode()
-        req = (f"GET /api/websocket HTTP/1.1\r\nHost: {host}:{port}\r\n"
-               "Upgrade: websocket\r\nConnection: Upgrade\r\n"
-               f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n")
-        self.s.sendall(req.encode())
-        resp = b""
-        while b"\r\n\r\n" not in resp:
-            resp += self.s.recv(1)
-        if b" 101 " not in resp.split(b"\r\n")[0]:
-            raise RuntimeError("handshake failed: " + resp.decode(errors="replace"))
-        assert self._recv()["type"] == "auth_required"
-        self._send({"type": "auth", "access_token": token})
-        if self._recv().get("type") != "auth_ok":
-            raise RuntimeError("WS auth failed")
-        self._id = 0
-
-    def _recv_exact(self, n):
-        buf = b""
-        while len(buf) < n:
-            chunk = self.s.recv(n - len(buf))
-            if not chunk:
-                raise ConnectionError("socket closed")
-            buf += chunk
-        return buf
-
-    def _send(self, obj):
-        data = json.dumps(obj).encode()
-        header = struct.pack("!B", 0x81)
-        length = len(data)
-        if length < 126:
-            header += struct.pack("!B", 0x80 | length)
-        elif length < 65536:
-            header += struct.pack("!BH", 0x80 | 126, length)
-        else:
-            header += struct.pack("!BQ", 0x80 | 127, length)
-        mask = os.urandom(4)
-        self.s.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
-
-    def _recv(self):
-        while True:
-            b0, b1 = self._recv_exact(2)
-            opcode, length = b0 & 0x0F, b1 & 0x7F
-            if length == 126:
-                length = struct.unpack("!H", self._recv_exact(2))[0]
-            elif length == 127:
-                length = struct.unpack("!Q", self._recv_exact(8))[0]
-            payload = self._recv_exact(length) if length else b""
-            if opcode == 0x9:
-                continue
-            if opcode == 0x8:
-                raise ConnectionError("server closed")
-            if opcode in (0x1, 0x2):
-                return json.loads(payload.decode())
-
-    def cmd(self, **kw):
-        self._id += 1
-        kw["id"] = self._id
-        self._send(kw)
-        while True:
-            m = self._recv()
-            if m.get("id") == self._id and m.get("type") == "result":
-                if not m.get("success"):
-                    raise RuntimeError(f"WS {kw.get('type')} failed: {m.get('error')}")
-                return m.get("result")
 
 
 # ── helpers deploy/delete ────────────────────────────────────────────────────
@@ -199,8 +131,7 @@ def main():
     except ImportError:
         sys.exit("PyYAML required: pip install pyyaml")
 
-    here = os.path.dirname(os.path.abspath(__file__))
-    token = open(args.token or os.path.join(here, "token")).read().strip()
+    token = load_token(args.token)
     doc = yaml.safe_load(open(args.package)) or {}
 
     auto_filter = set(args.automations.split(",")) if args.automations else None
