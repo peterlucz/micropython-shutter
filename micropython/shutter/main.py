@@ -47,9 +47,24 @@ def save_config():
         ujson.dump(data, f)
 
 
-def apply_mqtt_config(payload):
+async def apply_mqtt_config(payload):
     """Merge incoming MQTT config with live positions, then save to file."""
     new_data = ujson.loads(payload)
+
+    # Devices that vanish or change type in the new layout would leave their
+    # HA entities behind as permanently-unavailable ghosts: publishing an
+    # empty retained discovery config makes HA delete the entity. No-op on
+    # the reconnect redeliveries, since the live layout matches by then.
+    incoming = {d.get('id'): d.get('type') for d in new_data.get('devices', [])}
+    for dev_id, device in devices.items():
+        if incoming.get(dev_id) != device['type']:
+            component = 'cover' if device['type'] == 'shutter' else 'switch'
+            topic = '{}/{}/{}_{}/config'.format(DISCOVERY_PREFIX, component,
+                                                DEVICE_ID, dev_id)
+            await client.publish(topic, '', retain=True, qos=1)
+            print('Cleared discovery config of removed {} {}'.format(
+                device['type'], dev_id))
+
     for d in new_data.get('devices', []):
         if d.get('type') == 'shutter' and d['id'] in devices:
             d['position'] = devices[d['id']].get('position', 0)
@@ -273,7 +288,7 @@ async def messages(client):
             payload   = msg.decode().strip()
 
             if topic_str == CONFIG_TOPIC:
-                apply_mqtt_config(payload)
+                await apply_mqtt_config(payload)
                 continue
 
             # Only the config topic is legitimately retained. A retained

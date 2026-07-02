@@ -131,7 +131,7 @@ No YAML configuration needed. The Pico publishes MQTT Discovery messages on ever
 2. In HA go to **Settings → Devices & Services → MQTT** — the device appears under the name set in `DEVICE_NAME`
 3. Entities are grouped under one HA device (identified by `DEVICE_ID`)
 
-**Adding or removing devices**: update `devices.json`, publish the new config to `{device_id}/config` with retain (`update_config.sh` does this), reboot the Pico. HA will add/remove entities on the next discovery publish.
+**Adding or removing devices**: update `devices.json`, publish the new config to `{device_id}/config` with retain (`update_config.sh` does this), reboot the Pico. Entities of removed devices are deleted from HA immediately (the firmware clears their retained discovery configs on config receipt); new devices appear after the reboot's discovery publish.
 
 **Running multiple Picos**: no extra config needed — each board derives a unique `DEVICE_ID` from its WiFi MAC address and namespaces all its MQTT topics with it, so boards never collide on the broker.
 
