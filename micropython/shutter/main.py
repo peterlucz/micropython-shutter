@@ -53,6 +53,14 @@ def apply_mqtt_config(payload):
     for d in new_data.get('devices', []):
         if d.get('type') == 'shutter' and d['id'] in devices:
             d['position'] = devices[d['id']].get('position', 0)
+    # The broker redelivers the retained config on every reconnect — skip
+    # the write when nothing changed so flaky WiFi doesn't wear the flash.
+    try:
+        with open(DEVICES_FILE) as f:
+            if ujson.load(f) == new_data:
+                return
+    except (OSError, ValueError):
+        pass
     with open(DEVICES_FILE, 'w') as f:
         ujson.dump(new_data, f)
     print('Config updated on disk — reboot to apply new device layout.')
