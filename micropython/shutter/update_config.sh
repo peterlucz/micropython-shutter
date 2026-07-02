@@ -78,8 +78,11 @@ MQTT_PASS=$(python3 -c "exec(open('secrets.py').read()); print(MQTT_PASSWORD)")
 # ── device id ─────────────────────────────────────────────────────────────────
 if [ -z "$DEVICE_ID" ]; then
     info "No device id given — discovering boards via retained status topics..."
+    # Boards are always pico_relay_<mac>; the filter drops other retained
+    # */status topics such as HA's own birth message (homeassistant/status).
     mapfile -t IDS < <(mosquitto_sub -h "$BROKER" -u "$MQTT_USER" -P "$MQTT_PASS" \
-        -t '+/status' -W 2 -F '%t' 2>/dev/null | sed 's|/status$||' | sort -u)
+        -t '+/status' -W 2 -F '%t' 2>/dev/null \
+        | sed -n 's|^\(pico_relay_[^/]*\)/status$|\1|p' | sort -u)
     case ${#IDS[@]} in
         0) die "No boards found on $BROKER. Pass the device id explicitly: $0 $1 <device-id>" ;;
         1) DEVICE_ID="${IDS[0]}"
