@@ -98,6 +98,7 @@ Files to upload to the Pico with `mpremote`:
 ```bash
 mpremote cp config.py secrets.py mqtt_local.py main.py mqtt_as.py devices.json :
 ```
+On an already-provisioned board, leave `devices.json` out of the copy — the on-flash copy holds live shutter positions (`deploy.sh` seeds it only when the board doesn't have one).
 
 For quick iteration without flashing:
 ```bash

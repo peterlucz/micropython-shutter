@@ -15,7 +15,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_FILES="config.py mqtt_local.py main.py mqtt_as.py devices.json"
+APP_FILES="config.py mqtt_local.py main.py mqtt_as.py"
 FIRMWARE_URL="https://micropython.org/download/RPI_PICO_W/RPI_PICO_W-latest.uf2"
 FIRMWARE_CACHE="$HOME/.cache/pico-firmware/RPI_PICO_W-latest.uf2"
 
@@ -133,6 +133,16 @@ for f in $APP_FILES secrets.py; do
     mpremote cp "$f" ":$f"
     ok "  $f"
 done
+
+# devices.json holds live shutter positions (and MicroPython re-flashes keep
+# the filesystem), so seed it only on a fresh board — never clobber it on a
+# re-deploy.
+if mpremote exec "import os; os.stat('devices.json')" >/dev/null 2>&1; then
+    warn "  devices.json already on the board — kept (holds live positions)"
+else
+    mpremote cp devices.json ":devices.json"
+    ok "  devices.json (seeded)"
+fi
 
 # ── Step 7: done ──────────────────────────────────────────────────────────────
 step "Done"
