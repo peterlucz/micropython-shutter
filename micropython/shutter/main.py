@@ -1,6 +1,6 @@
 from mqtt_as import MQTTClient
 from mqtt_local import wifi_led, blue_led, config
-from config import DEVICES_FILE, DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG
+from config import DEVICES_FILE, DISCOVERY_FILE, DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG
 import uasyncio as asyncio
 import machine
 from machine import Pin
@@ -47,27 +47,53 @@ def save_config():
         ujson.dump(data, f)
 
 
-async def apply_mqtt_config(payload):
-    """Merge incoming MQTT config with live positions, then save to file."""
+def validate_config(data):
+    """Return an error string for a malformed config, or None if valid.
+
+    A parseable-but-wrong payload (string ids, unknown types, missing relay
+    or timing keys) must be rejected before it deletes HA entities or gets
+    saved as a layout the next boot can't load.
+    """
+    devs = data.get('devices') if isinstance(data, dict) else None
+    if not isinstance(devs, list):
+        return "'devices' must be a list"
+    seen = set()
+    for d in devs:
+        if not isinstance(d, dict):
+            return 'device entries must be objects'
+        dev_id = d.get('id')
+        if not isinstance(dev_id, int):
+            return 'device id must be an integer, got {!r}'.format(dev_id)
+        if dev_id in seen:
+            return 'duplicate device id {}'.format(dev_id)
+        seen.add(dev_id)
+        if d.get('type') == 'shutter':
+            required = ('relay_up', 'relay_down', 'time_up', 'time_down')
+        elif d.get('type') == 'switch':
+            required = ('relay',)
+        else:
+            return 'device {} has unknown type {!r}'.format(dev_id, d.get('type'))
+        for key in required:
+            if not isinstance(d.get(key), int):
+                return 'device {} needs an integer {}'.format(dev_id, key)
+        for key in ('duration', 'position'):
+            if key in d and not isinstance(d[key], int):
+                return 'device {} {} must be an integer'.format(dev_id, key)
+    return None
+
+
+def apply_mqtt_config(payload):
+    """Validate an incoming MQTT config, merge live positions, save to file."""
     new_data = ujson.loads(payload)
+    err = validate_config(new_data)
+    if err:
+        print('Rejected config update: {}'.format(err))
+        return
 
-    # Devices that vanish or change type in the new layout would leave their
-    # HA entities behind as permanently-unavailable ghosts: publishing an
-    # empty retained discovery config makes HA delete the entity. No-op on
-    # the reconnect redeliveries, since the live layout matches by then.
-    incoming = {d.get('id'): d.get('type') for d in new_data.get('devices', [])}
-    for dev_id, device in devices.items():
-        if incoming.get(dev_id) != device['type']:
-            component = 'cover' if device['type'] == 'shutter' else 'switch'
-            topic = '{}/{}/{}_{}/config'.format(DISCOVERY_PREFIX, component,
-                                                DEVICE_ID, dev_id)
-            await client.publish(topic, '', retain=True, qos=1)
-            print('Cleared discovery config of removed {} {}'.format(
-                device['type'], dev_id))
-
-    for d in new_data.get('devices', []):
-        if d.get('type') == 'shutter' and d['id'] in devices:
-            d['position'] = devices[d['id']].get('position', 0)
+    for d in new_data['devices']:
+        if d['type'] == 'shutter':
+            live = devices.get(d['id'])
+            d['position'] = live.get('position', 0) if live else d.get('position', 0)
     # The broker redelivers the retained config on every reconnect — skip
     # the write when nothing changed so flaky WiFi doesn't wear the flash.
     try:
@@ -79,6 +105,20 @@ async def apply_mqtt_config(payload):
     with open(DEVICES_FILE, 'w') as f:
         ujson.dump(new_data, f)
     print('Config updated on disk — reboot to apply new device layout.')
+
+    # Devices that vanish or change type in the new layout would leave their
+    # HA entities behind as permanently-unavailable ghosts — delete them now.
+    # Clearing runs as its own task so a broker outage inside the blocking
+    # publish can't stall the messages() loop; if it dies before finishing,
+    # publish_discovery() re-clears whatever DISCOVERY_FILE still lists.
+    incoming = {d['id']: d['type'] for d in new_data['devices']}
+    stale = set()
+    for dev_id, device in devices.items():
+        component = _COMPONENT.get(device['type'])
+        if component and incoming.get(dev_id) != device['type']:
+            stale.add((component, dev_id))
+    if stale:
+        asyncio.create_task(clear_discovery(stale))
 
 
 # ---------------------------------------------------------------------------
@@ -96,12 +136,68 @@ async def publish_switch_state(device, state):
                          state, qos=1)
 
 
+# Device type → HA discovery component. Unknown types have no discovery
+# topic and are skipped everywhere.
+_COMPONENT = {'shutter': 'cover', 'switch': 'switch'}
+
+
+def discovery_topic(component, dev_id):
+    return '{}/{}/{}_{}/config'.format(DISCOVERY_PREFIX, component,
+                                       DEVICE_ID, dev_id)
+
+
+def load_published():
+    """Discovery topics currently retained on the broker, as a set of
+    (component, dev_id) pairs — remembered across reboots in DISCOVERY_FILE
+    so stale topics can be cleared even after the layout that created them
+    is gone."""
+    try:
+        with open(DISCOVERY_FILE) as f:
+            return {(c, i) for c, i in ujson.load(f)}
+    except (OSError, ValueError):
+        return set()
+
+
+def save_published(published):
+    with open(DISCOVERY_FILE, 'w') as f:
+        ujson.dump(sorted(published), f)
+
+
+async def clear_discovery(stale):
+    """Publish empty retained discovery configs for the given (component,
+    dev_id) pairs — HA deletes the entities immediately — then drop them
+    from DISCOVERY_FILE."""
+    for component, dev_id in sorted(stale):
+        await client.publish(discovery_topic(component, dev_id), '',
+                             retain=True, qos=1)
+        print('Cleared discovery config of removed {} {}'.format(
+            component, dev_id))
+    save_published(load_published() - stale)
+
+
 async def publish_discovery():
+    # Reconcile the broker's retained discovery configs with the desired
+    # layout. Desired = live devices still present with the same type in the
+    # on-disk layout; after a config update but before the reboot that
+    # applies it the two differ, and publishing from the intersection stops
+    # a reconnect from resurrecting entities the pending layout removed.
+    # Previously-published topics no longer desired are cleared, so removals
+    # converge even if a receipt-time clear was interrupted or bypassed
+    # (e.g. devices.json replaced over mpremote).
+    try:
+        on_disk = {d['id']: d.get('type') for d in load_config()}
+    except (OSError, ValueError, KeyError):
+        on_disk = None
+    desired = set()
     dev_info = {'ids': [DEVICE_ID], 'name': DEVICE_NAME,
                 'mdl': 'Waveshare Pico-Relay-B', 'mf': 'Waveshare'}
     for dev_id, device in devices.items():
+        component = _COMPONENT.get(device['type'])
+        if component is None:
+            continue
+        if on_disk is not None and on_disk.get(dev_id) != device['type']:
+            continue
         if device['type'] == 'shutter':
-            topic = '{}/cover/{}_{}/config'.format(DISCOVERY_PREFIX, DEVICE_ID, dev_id)
             payload = ujson.dumps({
                 'name':        'Shutter {}'.format(dev_id),
                 'uniq_id':     '{}_{}_shutter_{}'.format(DEVICE_ID, DEVICE_NAME.replace(' ', '_'), dev_id),
@@ -126,8 +222,7 @@ async def publish_discovery():
                 'ret':         False,
                 'dev':         dev_info,
             })
-        elif device['type'] == 'switch':
-            topic = '{}/switch/{}_{}/config'.format(DISCOVERY_PREFIX, DEVICE_ID, dev_id)
+        else:
             payload = ujson.dumps({
                 'name':        'Switch {}'.format(dev_id),
                 'uniq_id':     '{}_{}_switch_{}'.format(DEVICE_ID, DEVICE_NAME.replace(' ', '_'), dev_id),
@@ -140,10 +235,18 @@ async def publish_discovery():
                 'pl_not_avail':'offline',
                 'dev':         dev_info,
             })
-        else:
-            continue
-        await client.publish(topic, payload, retain=True, qos=1)
+        desired.add((component, dev_id))
+        await client.publish(discovery_topic(component, dev_id), payload,
+                             retain=True, qos=1)
         gc.collect()
+    published = load_published()
+    for component, dev_id in sorted(published - desired):
+        await client.publish(discovery_topic(component, dev_id), '',
+                             retain=True, qos=1)
+        print('Cleared stale discovery config of {} {}'.format(
+            component, dev_id))
+    if published != desired:
+        save_published(desired)
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +391,7 @@ async def messages(client):
             payload   = msg.decode().strip()
 
             if topic_str == CONFIG_TOPIC:
-                await apply_mqtt_config(payload)
+                apply_mqtt_config(payload)
                 continue
 
             # Only the config topic is legitimately retained. A retained

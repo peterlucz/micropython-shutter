@@ -16,7 +16,7 @@ The application uses an **asynchronous event-driven architecture** with the foll
    - `up()` — resubscribes to all device topics on every reconnect
    - `down()` — tracks connectivity loss and increments outage counter
 3. **Device Control**: Per-device async tasks (`shutter_move`, `switch_toggle`) drive GPIO relay pins; tracked in `active_tasks` so they can be cancelled (e.g. STOP command)
-4. **MQTT Discovery**: On every broker connect, `up()` publishes retained discovery configs to `homeassistant/cover/…` and `homeassistant/switch/…` so HA creates entities automatically
+4. **MQTT Discovery**: On every broker connect, `up()` reconciles the broker's retained discovery configs with the layout: it publishes configs to `homeassistant/cover/…` and `homeassistant/switch/…` for devices in the on-disk layout, and clears previously published topics (tracked in `discovery.json` on flash) that no longer belong — so removed devices converge even after an interrupted clear or an mpremote redeploy
 5. **Availability**: Publishes `{device_id}/status = "online"` (retained) on connect and every 30 s; retained LWT fires `"offline"` on disconnect so HA marks entities unavailable
 
 ### Device Types
@@ -88,7 +88,7 @@ DEBUG            = True
 `time_up` / `time_down` are milliseconds for full travel (0 → 100%). `duration` is milliseconds for auto-off switches.
 
 ### Updating config from Home Assistant
-Publish the updated JSON to `{device_id}/config` (e.g. `pico_relay_ab12cd/config`) with **retain=True** in HA Developer Tools → MQTT, or use `update_config.sh`. The Pico saves it to `devices.json` on receipt; reboot to apply a new device layout. Position values in the incoming config are ignored — live positions are preserved automatically.
+Publish the updated JSON to `{device_id}/config` (e.g. `pico_relay_ab12cd/config`) with **retain=True** in HA Developer Tools → MQTT, or use `update_config.sh`. The Pico saves it to `devices.json` on receipt; reboot to apply a new device layout. Position values in the incoming config are ignored — live positions are preserved automatically. Malformed configs (string ids, unknown types, missing relay/timing keys) are rejected with a serial log message and neither saved nor acted on.
 
 ## Development Notes
 
