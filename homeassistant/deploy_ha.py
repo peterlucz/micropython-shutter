@@ -10,6 +10,8 @@ and pushes its contents via the API instead:
     match the YAML key so automation references resolve.
   * automations -> REST config API (POST /api/config/automation/config/<id>),
     then automation.reload.
+  * scripts -> REST config API (POST /api/config/script/config/<object_id>),
+    then script.reload.
 
 All operations are idempotent: existing entities are updated in place, not
 duplicated. Use --delete to tear the same entities down again.
@@ -112,6 +114,25 @@ def delete_automation(rest, aid, dry):
         raise RuntimeError(f"automation {aid} delete failed: {st} {res}")
 
 
+# ── scripts deploy/delete ────────────────────────────────────────────────────
+def deploy_script(rest, oid, cfg, dry):
+    print(f"  push    script:{oid}")
+    if dry:
+        return
+    st, res = rest("POST", f"/api/config/script/config/{oid}", cfg)
+    if st != 200:
+        raise RuntimeError(f"script {oid} write failed: {st} {res}")
+
+
+def delete_script(rest, oid, dry):
+    print(f"  delete  script:{oid}")
+    if dry:
+        return
+    st, res = rest("DELETE", f"/api/config/script/config/{oid}")
+    if st not in (200, 404):
+        raise RuntimeError(f"script {oid} delete failed: {st} {res}")
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser(description="Deploy an HA package YAML via the API.")
@@ -122,6 +143,7 @@ def main():
     ap.add_argument("--delete", action="store_true", help="remove the entities instead of deploying")
     ap.add_argument("--automations", help="comma-separated automation ids to include (default all)")
     ap.add_argument("--helpers", help="comma-separated helper object_ids to include (default all)")
+    ap.add_argument("--scripts", help="comma-separated script object_ids to include (default all)")
     ap.add_argument("--no-reload", action="store_true", help="skip automation.reload")
     ap.add_argument("--dry-run", action="store_true", help="print the plan, change nothing")
     args = ap.parse_args()
@@ -136,6 +158,7 @@ def main():
 
     auto_filter = set(args.automations.split(",")) if args.automations else None
     help_filter = set(args.helpers.split(",")) if args.helpers else None
+    script_filter = set(args.scripts.split(",")) if args.scripts else None
 
     # collect helpers: {domain: {object_id: cfg}}
     helpers = []
@@ -155,8 +178,12 @@ def main():
             continue
         autos.append(a)
 
+    # collect scripts: {object_id: cfg}
+    scripts = [(oid, cfg or {}) for oid, cfg in (doc.get("script") or {}).items()
+               if not script_filter or oid in script_filter]
+
     # warn about unsupported sections
-    known = set(HELPER_DOMAINS) | {"automation", "homeassistant"}
+    known = set(HELPER_DOMAINS) | {"automation", "script", "homeassistant"}
     for k in doc:
         if k not in known:
             print(f"  NOTE    unsupported section '{k}:' skipped "
@@ -166,7 +193,7 @@ def main():
     verb = "DELETE" if args.delete else "DEPLOY"
     dry = " (dry-run)" if args.dry_run else ""
     print(f"{verb}{dry}  {args.package}  ->  {args.host}:{args.port}")
-    print(f"  {len(helpers)} helper(s), {len(autos)} automation(s)\n")
+    print(f"  {len(helpers)} helper(s), {len(autos)} automation(s), {len(scripts)} script(s)\n")
 
     ws = WS(args.host, args.port, token)
     rest = Rest(f"http://{args.host}:{args.port}", token)
@@ -174,6 +201,8 @@ def main():
     if args.delete:
         for a in autos:
             delete_automation(rest, a["id"], args.dry_run)
+        for oid, _ in scripts:
+            delete_script(rest, oid, args.dry_run)
         for domain, oid, _ in helpers:
             delete_helper(ws, domain, oid, args.dry_run)
     else:
@@ -181,10 +210,15 @@ def main():
             deploy_helper(ws, domain, oid, cfg, args.dry_run)
         for a in autos:
             deploy_automation(rest, a, args.dry_run)
+        for oid, cfg in scripts:
+            deploy_script(rest, oid, cfg, args.dry_run)
 
     if autos and not args.no_reload and not args.dry_run:
         st, _ = rest("POST", "/api/services/automation/reload", {})
         print(f"\n  automation.reload -> {st}")
+    if scripts and not args.no_reload and not args.dry_run:
+        st, _ = rest("POST", "/api/services/script/reload", {})
+        print(f"  script.reload -> {st}")
 
     print("\nDone." + (" (nothing changed)" if args.dry_run else ""))
 

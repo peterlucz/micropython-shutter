@@ -1,0 +1,257 @@
+# Shutters dashboard — the real covers, grouped by floor and room.
+#
+# Each shutter: a tile with a position slider + a Reset button that calls
+# script.shutter_reset (sets the cover to where the group×vent schedule says
+# it should be right now — see packages/shutters_controls.yaml). Rooms with
+# two shutters also get a room-level Reset; the bottom button resets the
+# whole house (with a confirmation prompt).
+#
+# Built-in cards only. Pushed to HA at /shutters-home via push_dashboard.py
+# (HA requires a hyphen in dashboard url paths).
+
+title: Shutters
+views:
+  - title: Shutters
+    path: shutters
+    icon: mdi:window-shutter
+    type: sections
+    max_columns: 2
+    sections:
+
+      # ── Ground floor ─────────────────────────────────────────────
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Ground floor
+            heading_style: title
+            icon: mdi:home-floor-0
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Terasz
+            icon: mdi:balcony
+          - type: tile
+            entity: cover.pico_relay_02efc0_shutter_2
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efc0_shutter_2]
+          - type: tile
+            entity: cover.pico_relay_02efc0_shutter_3
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efc0_shutter_3]
+          - type: button
+            name: Reset Terasz
+            icon: mdi:restore
+            grid_options: {columns: 12, rows: 1}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efc0_shutter_2
+                  - cover.pico_relay_02efc0_shutter_3
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Konyha
+            icon: mdi:countertop
+          - type: tile
+            entity: cover.pico_relay_02efc0_shutter_1
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efc0_shutter_1]
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Dolgozó
+            icon: mdi:desk
+          - type: tile
+            entity: cover.pico_relay_02efbe_shutter_0
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efbe_shutter_0]
+
+      # ── Upstairs ─────────────────────────────────────────────────
+      - type: grid
+        column_span: 2
+        cards:
+          - type: heading
+            heading: Upstairs
+            heading_style: title
+            icon: mdi:home-floor-1
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Hanna szoba
+            icon: mdi:bed-empty
+          - type: tile
+            entity: cover.pico_relay_02efbc_shutter_1
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efbc_shutter_1]
+          - type: tile
+            entity: cover.pico_relay_02efbe_shutter_2
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efbe_shutter_2]
+          - type: button
+            name: Reset Hanna szoba
+            icon: mdi:restore
+            grid_options: {columns: 12, rows: 1}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efbc_shutter_1
+                  - cover.pico_relay_02efbe_shutter_2
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Tami szoba
+            icon: mdi:bed-empty
+          - type: tile
+            entity: cover.pico_relay_02efbc_shutter_2
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efbc_shutter_2]
+          - type: tile
+            entity: cover.pico_relay_02efbc_shutter_3
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efbc_shutter_3]
+          - type: button
+            name: Reset Tami szoba
+            icon: mdi:restore
+            grid_options: {columns: 12, rows: 1}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efbc_shutter_2
+                  - cover.pico_relay_02efbc_shutter_3
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Háló
+            icon: mdi:bed-king
+          - type: tile
+            entity: cover.pico_relay_02efbe_shutter_1
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets: [cover.pico_relay_02efbe_shutter_1]
+
+      # ── Whole house ──────────────────────────────────────────────
+      - type: grid
+        column_span: 2
+        cards:
+          - type: button
+            name: Reset ALL shutters to schedule
+            icon: mdi:restore-alert
+            grid_options: {columns: full, rows: 1}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              confirmation:
+                text: Move every shutter in the house to its scheduled position?
+              data:
+                targets:
+                  - cover.pico_relay_02efc0_shutter_2
+                  - cover.pico_relay_02efc0_shutter_3
+                  - cover.pico_relay_02efc0_shutter_1
+                  - cover.pico_relay_02efbe_shutter_0
+                  - cover.pico_relay_02efbc_shutter_1
+                  - cover.pico_relay_02efbe_shutter_2
+                  - cover.pico_relay_02efbc_shutter_2
+                  - cover.pico_relay_02efbc_shutter_3
+                  - cover.pico_relay_02efbe_shutter_1

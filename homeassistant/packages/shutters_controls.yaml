@@ -1,0 +1,110 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Shutter manual controls — reset script for the Shutters dashboard
+#
+# Deployed with the API deployer:
+#
+#   python3 deploy_ha.py packages/shutters_controls.yaml
+#
+# Kept separate from shutters.yaml on purpose: that package's automations are
+# not deployed yet (they drive the real covers on a schedule), while this
+# script is safe to deploy — it only moves covers when invoked from the
+# dashboard buttons.
+#
+# script.shutter_reset sets the given covers to where the group×vent schedule
+# says they should be RIGHT NOW:
+#   - between the morning open moment (later of sunrise / today's open time)
+#     and the cover's own close moment → the temperature-derived open level
+#   - otherwise → 0, or ventilation_close_level for vent-group members while
+#     binary_sensor.ventilation_recommended is on
+# The close moment follows the cover's timing group: normal → sunset,
+# delayed → sunset + delayed_close_offset, kids → earlier of sunset /
+# kids_close_time.
+#
+# Timing group and vent membership are looked up LIVE from the six cover
+# groups (cover.shutters_{normal,delayed,kids}{,_vent}), so moving a shutter
+# between groups never requires touching this script or the dashboard.
+# ─────────────────────────────────────────────────────────────────────────────
+
+script:
+  shutter_reset:
+    alias: "Shutters: reset to scheduled position"
+    description: >-
+      Sets the given covers to the position the shutter schedule prescribes
+      for the current time. Group membership decides each cover's close time
+      and vent behaviour.
+    icon: mdi:restore
+    mode: parallel
+    fields:
+      targets:
+        name: Covers
+        description: Cover entities to reset (individual covers, not the groups)
+        required: true
+        selector:
+          entity:
+            domain: cover
+            multiple: true
+    sequence:
+      - variables:
+          # Temperature-derived morning open level (same formula as the
+          # morning-open automations in shutters.yaml, incl. the span guard).
+          open_level: >-
+            {% set tmax = states('input_number.today_temp_max')|float(20) %}
+            {% set tlow = states('input_number.temp_full_open')|float(25) %}
+            {% set thigh = states('input_number.temp_min_open')|float(35) %}
+            {% set pmin = states('input_number.min_open_position')|float(35) %}
+            {% set span = [thigh - tlow, 0.1]|max %}
+            {{ [[100 - (tmax - tlow)/span*(100 - pmin), pmin]|max, 100]|min|round|int }}
+          open_time: >-
+            {{ states('input_datetime.open_time_workday')
+               if is_state('binary_sensor.workday_sensor','on')
+               else states('input_datetime.open_time_holiday') }}
+          # True once today's sunrise is behind us (also all evening/night —
+          # the "night" outcome then comes from the close-time comparison).
+          sunrise_passed: >-
+            {{ is_state('sun.sun','above_horizon')
+               or (state_attr('sun.sun','next_rising')|as_datetime|as_local).date() != now().date() }}
+          # Today's sunset as a timestamp; after sunset next_setting is
+          # already tomorrow's, so subtract a day (±2 min — fine for a reset).
+          sunset_today_ts: >-
+            {% set nxt = state_attr('sun.sun','next_setting')|as_datetime %}
+            {{ as_timestamp(nxt) if (nxt|as_local).date() == now().date()
+               else as_timestamp(nxt) - 86400 }}
+      - repeat:
+          for_each: "{{ targets }}"
+          sequence:
+            - variables:
+                vent: >-
+                  {{ repeat.item in
+                     (state_attr('cover.shutters_normal_vent','entity_id') or [])
+                     + (state_attr('cover.shutters_delayed_vent','entity_id') or [])
+                     + (state_attr('cover.shutters_kids_vent','entity_id') or []) }}
+                close_ts: >-
+                  {% set kids = (state_attr('cover.shutters_kids','entity_id') or [])
+                              + (state_attr('cover.shutters_kids_vent','entity_id') or []) %}
+                  {% set delayed = (state_attr('cover.shutters_delayed','entity_id') or [])
+                                 + (state_attr('cover.shutters_delayed_vent','entity_id') or []) %}
+                  {% if repeat.item in kids %}
+                    {{ [sunset_today_ts|float,
+                        as_timestamp(today_at(states('input_datetime.kids_close_time')))] | min }}
+                  {% elif repeat.item in delayed %}
+                    {{ sunset_today_ts|float
+                       + states('input_number.delayed_close_offset')|float(20) * 60 }}
+                  {% else %}
+                    {{ sunset_today_ts|float }}
+                  {% endif %}
+                expected: >-
+                  {% set daytime = sunrise_passed
+                                   and now() >= today_at(open_time)
+                                   and as_timestamp(now()) < close_ts|float %}
+                  {% if daytime %}
+                    {{ open_level }}
+                  {% elif vent and is_state('binary_sensor.ventilation_recommended','on') %}
+                    {{ states('input_number.ventilation_close_level')|float(30)|int }}
+                  {% else %}
+                    0
+                  {% endif %}
+            - action: cover.set_cover_position
+              target:
+                entity_id: "{{ repeat.item }}"
+              data:
+                position: "{{ expected }}"
