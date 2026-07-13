@@ -1,126 +1,162 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Shutter automation package
+# Shutter automation package — group × vent model (2026-07-13 rewrite)
 #
-# Place this file in your HA config directory under packages/shutters.yaml.
-# In configuration.yaml add:
+# The HA box has no file access, so this is deployed with the API deployer
+# (helpers via WebSocket, automations via the REST config API):
 #
-#   homeassistant:
-#     packages: !include_dir_named packages
+#   python3 deploy_ha.py packages/shutters.yaml
+#
+# ⚠ NOT YET DEPLOYED — deploying this drives the REAL covers. The simulated
+# test rig (shutters_test_rig.yaml) validates the same schedule against
+# input_number helpers first; both read the same tuning-knob helpers below,
+# so what the rig charts is what these automations will do.
+#
+# Model:
+#   Three timing groups decide WHEN a shutter closes in the evening:
+#     normal   — at sunset
+#     delayed  — sunset + delayed_close_offset minutes
+#     kids     — at sunset or kids_close_time, whichever comes first
+#   A vent overlay decides HOW FAR: shutters in a *_vent group close to
+#   ventilation_close_level instead of 0 whenever
+#   binary_sensor.ventilation_recommended is 'on' at their group's close
+#   moment. Morning open is common: every group opens to the temperature-
+#   derived level at the later of sunrise / the configured open time.
 #
 # Prerequisites:
-#   - Met.no integration (entity: weather.forecast_home)
-#   - Workday binary sensor set up for Hungary (binary_sensor.workday_sensor)
+#   - Met.no integration (weather.forecast_home)
+#   - Workday binary sensor for Hungary (binary_sensor.workday_sensor)
 #   - Cover entities created via Pico MQTT Discovery
-#   - Cover groups created via UI — entity IDs must match the CONFIGURE comments:
-#       cover.shutters_workday_morning
-#       cover.shutters_weekend_morning
-#       cover.shutters_evening
-#       cover.shutters_evening_delayed
-#       cover.shutters_night_ventilation
+#   - Cover groups (created 2026-07-13 via the group-helper config flow):
+#       cover.shutters_normal         Terasz2, Konyha, Dolgozó
+#       cover.shutters_normal_vent    Háló
+#       cover.shutters_delayed        (no members yet — reserved)
+#       cover.shutters_delayed_vent   Terasz1
+#       cover.shutters_kids           Hanna ajtó, Tami ajtó
+#       cover.shutters_kids_vent      Hanna ablak, Tami ablak
+#     A member-less cover group is 'unavailable' with supported_features 0 and
+#     rejects cover services, so every action on cover.shutters_delayed is
+#     guarded until it gets members.
+#   - binary_sensor.ventilation_recommended — config-entry template helper
+#     (entry 01KWESNGYR3PDGP7ZDHV6X7AFQ; deploy_ha.py cannot push it, its
+#     state template is maintained via the options flow / UI):
+#       today_temp_max > vent_day_temp_threshold
+#       AND vent_night_temp_floor <= tonight_temp_min <= vent_night_temp_ceiling
+#
+# All helpers below already exist live (shared with the test rig). None have
+# `initial:` — live values are the truth and must survive deploys/restarts.
+# Current live values are noted in comments; on a fresh install seed them via
+# input_number.set_value / input_datetime.set_datetime after deploy.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# ── Helpers — tuning knobs ────────────────────────────────────────────────────
 
 input_datetime:
-  workday_morning_earliest:
-    name: "Workday morning — earliest open time"
+  open_time_workday:
+    name: "Open time — workday (earliest)"   # live: 07:00
     has_time: true
     has_date: false
-    initial: "06:30:00"
     icon: mdi:weather-sunrise
 
-  weekend_morning_time:
-    name: "Weekend morning — open time"
+  open_time_holiday:
+    name: "Open time — holiday (earliest)"   # live: 08:12
     has_time: true
     has_date: false
-    initial: "08:10:00"
     icon: mdi:alarm-snooze
 
-  # Written by the automations below at sunset — not tuning knobs. They hold
-  # the computed action datetimes so the schedule survives HA restarts and
+  kids_close_time:
+    name: "Kids close time"                  # live: 20:45
+    has_time: true
+    has_date: false
+    icon: mdi:sleep
+
+  # Written by the delayed-close automation at sunset — NOT a tuning knob. It
+  # holds the computed close datetime so the schedule survives HA restarts and
   # automation.reload (a plain delay: step would be silently cancelled).
   evening_delayed_close_at:
-    name: "Evening delayed close — scheduled for"
+    name: "Delayed close — scheduled for"
     has_date: true
     has_time: true
     icon: mdi:clock-end
 
-  night_vent_open_at:
-    name: "Night ventilation — scheduled for"
-    has_date: true
-    has_time: true
-    icon: mdi:clock-start
-
 input_number:
-  shutter_temp_full_open:
-    name: "Shutter — temperature for full open"
-    min: 10
-    max: 35
-    step: 0.5
-    initial: 25
-    unit_of_measurement: "°C"
-    icon: mdi:thermometer
-    mode: box
-
-  shutter_temp_min_open:
-    name: "Shutter — temperature for minimum open"
-    min: 15
-    max: 45
-    step: 0.5
-    initial: 35
-    unit_of_measurement: "°C"
-    icon: mdi:thermometer-high
-    mode: box
-
-  shutter_min_position:
-    name: "Shutter — minimum open position"
-    min: 0
-    max: 100
-    step: 5
-    initial: 35
-    unit_of_measurement: "%"
-    icon: mdi:window-shutter
-    mode: box
-
-  evening_delayed_offset_min:
-    name: "Evening delayed close — offset after sunset"
+  delayed_close_offset:
+    name: "Delayed — close offset after sunset"   # live: 25
     min: 0
     max: 120
     step: 5
-    initial: 20
     unit_of_measurement: "min"
     icon: mdi:weather-sunset-down
     mode: box
 
-  night_vent_offset_min:
-    name: "Night ventilation — offset after sunset"
+  ventilation_close_level:
+    name: "Ventilation — close level"             # live: 55
     min: 0
-    max: 180
+    max: 100
     step: 5
-    initial: 45
-    unit_of_measurement: "min"
-    icon: mdi:weather-night
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
     mode: box
 
-  night_vent_temp_threshold:
-    name: "Night ventilation — minimum temperature threshold"
-    min: 15
-    max: 30
+  # Morning open level: tmax <= temp_full_open → 100 %; tmax >= temp_min_open
+  # → min_open_position; linear in between (see the *open_pos template below).
+  temp_full_open:
+    name: "Open level — temperature for full open"   # live: 25
+    min: 10
+    max: 35
     step: 0.5
-    initial: 22
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+    mode: box
+
+  temp_min_open:
+    name: "Open level — temperature for minimum open"   # live: 35
+    min: 15
+    max: 45
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+    mode: box
+
+  min_open_position:
+    name: "Open level — minimum open position"    # live: 30
+    min: 0
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+    mode: box
+
+  # Ventilation decision thresholds (read by binary_sensor.ventilation_recommended).
+  # Floor default 15.5 °C (was hardcoded 17): over Jul 2–11 every provider
+  # under-forecast the night minimum by ~1 °C on average, and the 17 °C floor
+  # blocked two nights (Jul 8/9, actual minima 15.8/17.4 °C) that should have
+  # been ventilated.
+  vent_day_temp_threshold:
+    name: "Ventilation — day max must exceed"     # live: 25
+    min: 15
+    max: 35
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+    mode: box
+
+  vent_night_temp_floor:
+    name: "Ventilation — night min floor"         # live: 15.5
+    min: 5
+    max: 25
+    step: 0.5
     unit_of_measurement: "°C"
     icon: mdi:thermometer-low
     mode: box
 
-  night_vent_position:
-    name: "Night ventilation — open position"
-    min: 0
-    max: 100
-    step: 5
-    initial: 55
-    unit_of_measurement: "%"
-    icon: mdi:window-shutter-open
+  vent_night_temp_ceiling:
+    name: "Ventilation — night min ceiling"       # live: 25
+    min: 15
+    max: 35
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
     mode: box
 
   # Populated by the "update daily forecast temperatures" automation below —
@@ -144,130 +180,147 @@ input_number:
     mode: box
 
 
-
-# ── Template sensors ──────────────────────────────────────────────────────────
-
-# Single source of truth for the morning open position, used by automations
-# 1 and 2. Recomputes whenever a helper changes, so it can be watched and
-# tuned live on a dashboard.
-#
-#   tempmax <= temp_full_open  →  100%
-#   tempmax >= temp_min_open   →  shutter_min_position %
-#   in between                 →  linear
-#
-# `span` is floored at 0.1 °C so equal thresholds degrade to a step function
-# instead of dividing by zero.
-#
-# NOTE: deploy_ha.py cannot push `template:` sections (config-entry entities);
-# until it learns the config-flow API this section only works via a file-based
-# package deploy.
-
-template:
-  - sensor:
-      - name: "Shutter open level"
-        unique_id: shutter_open_level
-        unit_of_measurement: "%"
-        icon: mdi:window-shutter-settings
-        state: >-
-          {% set tempmax   = states('input_number.today_temp_max') | float(20) %}
-          {% set temp_low  = states('input_number.shutter_temp_full_open') | float(25) %}
-          {% set temp_high = states('input_number.shutter_temp_min_open') | float(35) %}
-          {% set pos_min   = states('input_number.shutter_min_position') | float(35) %}
-          {% set span = [temp_high - temp_low, 0.1] | max %}
-          {{ [[100 - (tempmax - temp_low) / span * (100 - pos_min),
-               pos_min] | max, 100] | min | round | int }}
-
-
 # ── Automations ───────────────────────────────────────────────────────────────
 
 automation:
 
-  # ── 1. Workday morning open ───────────────────────────────────────────────
-  # Opens at MAX(sunrise, workday_morning_earliest) on working days.
+  # ── 1. Morning open (workday) ─────────────────────────────────────────────
+  # Opens ALL groups at MAX(sunrise, open_time_workday) on working days.
   # Two triggers with cross-conditions ensure exactly one fires:
-  #   - time trigger fires at 06:30 → sun condition passes only if sunrise already passed
-  #   - sunrise trigger fires at sunrise → time condition passes only if it's past 06:30
-  #
-  # Open position comes from sensor.shutter_open_level (template sensor above).
+  #   - time trigger → sun condition passes only if sunrise already passed
+  #   - sunrise trigger → time condition passes only if it's past the open time
+  # Open level: 100 % on cool days tapering linearly to min_open_position on
+  # hot days; span floored at 0.1 °C so equal thresholds degrade to a step
+  # function instead of dividing by zero.
 
-  - id: shutters_workday_morning
-    alias: "Shutters: workday morning open"
-    trigger:
+  - id: shutters_morning_open_workday
+    alias: "Shutters: morning open (workday)"
+    triggers:
       - platform: time
-        at: input_datetime.workday_morning_earliest
+        at: input_datetime.open_time_workday
       - platform: sun
         event: sunrise
-    condition:
+    conditions:
       - condition: state
         entity_id: binary_sensor.workday_sensor
         state: "on"
       - condition: template
-        value_template: >-
-          {{ now() >= today_at(states('input_datetime.workday_morning_earliest')) }}
+        value_template: "{{ now() >= today_at(states('input_datetime.open_time_workday')) }}"
       - condition: sun
         after: sunrise
-    action:
+    actions:
+      - variables:
+          position: &open_pos >-
+            {% set tmax = states('input_number.today_temp_max')|float(20) %}
+            {% set tlow = states('input_number.temp_full_open')|float(25) %}
+            {% set thigh = states('input_number.temp_min_open')|float(35) %}
+            {% set pmin = states('input_number.min_open_position')|float(35) %}
+            {% set span = [thigh - tlow, 0.1]|max %}
+            {{ [[100 - (tmax - tlow)/span*(100 - pmin), pmin]|max, 100]|min|round|int }}
       - action: cover.set_cover_position
         target:
-          entity_id: cover.shutters_workday_morning   # CONFIGURE: match your group entity ID
+          entity_id: &groups_always_populated
+            - cover.shutters_normal
+            - cover.shutters_normal_vent
+            - cover.shutters_delayed_vent
+            - cover.shutters_kids
+            - cover.shutters_kids_vent
         data:
-          position: "{{ states('sensor.shutter_open_level') | float(100) | int }}"
+          position: "{{ position }}"
+      - if:
+          - condition: template
+            value_template: &delayed_has_members >-
+              {{ (state_attr('cover.shutters_delayed','entity_id') or []) | count > 0 }}
+        then:
+          - action: cover.set_cover_position
+            target:
+              entity_id: cover.shutters_delayed
+            data:
+              position: "{{ position }}"
+    mode: single
 
+  # ── 2. Morning open (holiday) ─────────────────────────────────────────────
+  # Same as #1 on weekends / Hungarian public holidays, with its own open time.
 
-  # ── 2. Weekend morning open ───────────────────────────────────────────────
-  # Opens at the configured time on weekends and Hungarian public holidays.
-  # Open position comes from sensor.shutter_open_level (template sensor above).
-
-  - id: shutters_weekend_morning
-    alias: "Shutters: weekend morning open"
-    trigger:
+  - id: shutters_morning_open_holiday
+    alias: "Shutters: morning open (holiday)"
+    triggers:
       - platform: time
-        at: input_datetime.weekend_morning_time
-    condition:
+        at: input_datetime.open_time_holiday
+      - platform: sun
+        event: sunrise
+    conditions:
       - condition: state
         entity_id: binary_sensor.workday_sensor
         state: "off"
-    action:
+      - condition: template
+        value_template: "{{ now() >= today_at(states('input_datetime.open_time_holiday')) }}"
+      - condition: sun
+        after: sunrise
+    actions:
+      - variables:
+          position: *open_pos
       - action: cover.set_cover_position
         target:
-          entity_id: cover.shutters_weekend_morning   # CONFIGURE: match your group entity ID
+          entity_id: *groups_always_populated
         data:
-          position: "{{ states('sensor.shutter_open_level') | float(100) | int }}"
+          position: "{{ position }}"
+      - if:
+          - condition: template
+            value_template: *delayed_has_members
+        then:
+          - action: cover.set_cover_position
+            target:
+              entity_id: cover.shutters_delayed
+            data:
+              position: "{{ position }}"
+    mode: single
 
+  # ── 3. Evening close — normal group ───────────────────────────────────────
+  # At sunset: plain members fully closed, vent members to ventilation_close_level
+  # while ventilation is recommended (the decision is read at each group's own
+  # close moment, so a late flip of the binary sensor affects later groups).
 
-  # ── 3. Evening close ──────────────────────────────────────────────────────
-  # Closes shutters at sunset.
-
-  - id: shutters_evening_close
-    alias: "Shutters: evening close"
-    trigger:
+  - id: shutters_close_normal
+    alias: "Shutters: evening close (normal group)"
+    triggers:
       - platform: sun
         event: sunset
-    action:
+    actions:
       - action: cover.set_cover_position
         target:
-          entity_id: cover.shutters_evening   # CONFIGURE
+          entity_id: cover.shutters_normal
         data:
           position: 0
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.shutters_normal_vent
+        data:
+          position: &vent_or_zero >-
+            {{ states('input_number.ventilation_close_level')|float(30)|int
+               if is_state('binary_sensor.ventilation_recommended','on') else 0 }}
+    mode: single
 
+  # ── 4. Evening close — delayed group ──────────────────────────────────────
+  # Closes at sunset + delayed_close_offset. Two triggers instead of a delay:
+  # sunset writes the target datetime into a helper and a time trigger fires
+  # on it — a delay: step would be cancelled by automation.reload (deploy_ha.py
+  # runs it after every deploy) or an HA restart; the time trigger is
+  # re-registered from the helper and survives.
+  # NOTE for testing: automation.trigger cannot exercise the choose branches
+  # (no trigger.id is injected) — set evening_delayed_close_at to now+75 s
+  # instead.
 
-  # ── 4. Evening close — delayed ────────────────────────────────────────────
-  # Closes shutters at sunset + configurable offset (default 20 min).
-  # Two triggers instead of a delay: sunset writes the target datetime into a
-  # helper, and a time trigger fires on it. A delay: step would be cancelled
-  # by automation.reload (deploy_ha.py runs it after every deploy) or an HA
-  # restart; the time trigger is re-registered from the helper and survives.
-
-  - id: shutters_evening_close_delayed
-    alias: "Shutters: evening close (delayed)"
-    trigger:
+  - id: shutters_close_delayed
+    alias: "Shutters: evening close (delayed group)"
+    triggers:
       - platform: sun
         event: sunset
         id: schedule
       - platform: time
         at: input_datetime.evening_delayed_close_at
         id: close
-    action:
+    actions:
       - choose:
           - conditions:
               - condition: trigger
@@ -279,79 +332,81 @@ automation:
                 data:
                   datetime: >-
                     {{ (now() + timedelta(minutes =
-                        states('input_number.evening_delayed_offset_min') | float(20) | int))
+                        states('input_number.delayed_close_offset') | float(20) | int))
                        .strftime('%Y-%m-%d %H:%M:%S') }}
 
           - conditions:
               - condition: trigger
                 id: close
             sequence:
+              - if:
+                  - condition: template
+                    value_template: *delayed_has_members
+                then:
+                  - action: cover.set_cover_position
+                    target:
+                      entity_id: cover.shutters_delayed
+                    data:
+                      position: 0
               - action: cover.set_cover_position
                 target:
-                  entity_id: cover.shutters_evening_delayed   # CONFIGURE
+                  entity_id: cover.shutters_delayed_vent
                 data:
-                  position: 0
+                  position: *vent_or_zero
+    mode: single
 
+  # ── 5. Evening close — kids group ─────────────────────────────────────────
+  # Closes at sunset or kids_close_time, whichever comes FIRST:
+  #   - time trigger counts only while the sun is still up (before sunset)
+  #   - sunset trigger counts only before kids_close_time
 
-  # ── 5. Night ventilation ──────────────────────────────────────────────────
-  # At sunset, if tonight's forecast low exceeds the threshold, schedules the
-  # vent open at sunset + offset via a datetime helper (same restart-safe
-  # pattern as #4). On cool nights the helper keeps its past value, so the
-  # time trigger simply never fires.
-
-  - id: shutters_night_ventilation
-    alias: "Shutters: night ventilation"
-    trigger:
+  - id: shutters_close_kids
+    alias: "Shutters: evening close (kids group)"
+    triggers:
+      - platform: time
+        at: input_datetime.kids_close_time
       - platform: sun
         event: sunset
-        id: schedule
-      - platform: time
-        at: input_datetime.night_vent_open_at
-        id: open
-    action:
-      - choose:
-          - conditions:
-              - condition: trigger
-                id: schedule
-              - condition: template
-                value_template: >-
-                  {{ states('input_number.tonight_temp_min') | float(0)
-                     > states('input_number.night_vent_temp_threshold') | float(22) }}
-            sequence:
-              - action: input_datetime.set_datetime
-                target:
-                  entity_id: input_datetime.night_vent_open_at
-                data:
-                  datetime: >-
-                    {{ (now() + timedelta(minutes =
-                        states('input_number.night_vent_offset_min') | float(45) | int))
-                       .strftime('%Y-%m-%d %H:%M:%S') }}
-
-          - conditions:
-              - condition: trigger
-                id: open
-            sequence:
-              - action: cover.set_cover_position
-                target:
-                  entity_id: cover.shutters_night_ventilation   # CONFIGURE
-                data:
-                  position: "{{ states('input_number.night_vent_position') | float(55) | int }}"
-
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ (trigger.platform == 'time' and is_state('sun.sun','above_horizon'))
+             or (trigger.platform == 'sun'
+                 and now() < today_at(states('input_datetime.kids_close_time'))) }}
+    actions:
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.shutters_kids
+        data:
+          position: 0
+      - action: cover.set_cover_position
+        target:
+          entity_id: cover.shutters_kids_vent
+        data:
+          position: *vent_or_zero
+    mode: single
 
   # ── 6. Update daily forecast temperatures ─────────────────────────────────
-  # Writes today's forecast daytime high into today_temp_max (from the daily
-  # forecast) and the COMING night's low into tonight_temp_min (minimum of the
-  # hourly forecast over the next 18 h, so it's always the upcoming night rather
-  # than a low that already passed this morning). Runs at HA start and hourly.
+  # today_temp_max: before noon the fresh forecast value is taken as-is (it
+  # still contains the day's peak, and after midnight forecast[0] is already
+  # the new day); from noon on it is a high-water mark — Met.no's daily
+  # forecast[0].temperature only covers the REMAINING hours of today, and the
+  # hourly refresh used to erode the stored max by 1.3–4.7 °C before the
+  # sunset ventilation decision (measured Jul 3–11).
+  # tonight_temp_min: minimum of the hourly forecast over the next 18 h, i.e.
+  # always the coming night's low.
+  # Same automation id the test rig used to carry — ownership moved to this
+  # file 2026-07-13; content unchanged, so deploying either state is identical.
 
   - id: shutters_update_daily_temps
     alias: "Shutters: update daily forecast temperatures"
-    trigger:
+    description: "Populates today_temp_max (noon+ high-water mark) / tonight_temp_min from Met.no"
+    triggers:
       - platform: homeassistant
         event: start
       - platform: time_pattern
         hours: "/1"
-    action:
+    actions:
       - action: weather.get_forecasts
         target:
           entity_id: weather.forecast_home
@@ -376,7 +431,13 @@ automation:
         target:
           entity_id: input_number.today_temp_max
         data:
-          value: "{{ daily['weather.forecast_home'].forecast[0].temperature | float }}"
+          value: >-
+            {% set raw = daily['weather.forecast_home'].forecast[0].temperature | float %}
+            {% if now().hour < 12 %}
+              {{ raw }}
+            {% else %}
+              {{ [raw, states('input_number.today_temp_max') | float(-99)] | max }}
+            {% endif %}
 
       - action: input_number.set_value
         target:
@@ -392,3 +453,4 @@ automation:
               {% endif %}
             {% endfor %}
             {{ (ns.low | float) | round(1) }}
+    mode: single
