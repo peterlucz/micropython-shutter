@@ -1,0 +1,43 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Garage door push-button behaviour
+#
+# Deploy:  python3 deploy_ha.py packages/garage_door.yaml
+#
+# switch.pico_relay_02efbe_switch_3 ("Garage door", board 3 relay 14) drives
+# the garage opener's trigger input, which expects a short contact closure —
+# not a latched switch. Whenever the switch turns on, this automation turns
+# it back off after garage_door_pulse_ms milliseconds, so from HA it behaves
+# like a push button regardless of who turned it on (dashboard, voice,
+# automation).
+#
+# Defence in depth: the Pico's devices.json gives the same device
+# "duration": 1000, so the firmware itself drops the relay after 1 s even if
+# HA or WiFi dies mid-pulse (a latched contact would block the opener).
+# Keep the helper's maximum below that backstop.
+# ─────────────────────────────────────────────────────────────────────────────
+
+input_number:
+  garage_door_pulse_ms:
+    name: "Garage door — pulse length"    # live: 150; firmware backstop 1000
+    min: 50
+    max: 500
+    step: 10
+    unit_of_measurement: "ms"
+    icon: mdi:timer-outline
+    mode: box
+
+automation:
+  - id: garage_door_pulse
+    alias: "Garage door: pulse relay off"
+    description: "Turns the garage door relay off garage_door_pulse_ms after it switches on"
+    triggers:
+      - platform: state
+        entity_id: switch.pico_relay_02efbe_switch_3
+        to: "on"
+    actions:
+      - delay:
+          milliseconds: "{{ states('input_number.garage_door_pulse_ms')|float(150)|int }}"
+      - action: switch.turn_off
+        target:
+          entity_id: switch.pico_relay_02efbe_switch_3
+    mode: restart
