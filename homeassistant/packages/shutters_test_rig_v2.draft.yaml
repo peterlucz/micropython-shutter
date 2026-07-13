@@ -1,0 +1,509 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# DRAFT — NOT DEPLOYED. Rolled back on 2026-07-11 for a rethink.
+#
+# This is the per-shutter restructure (v2) of the shutter test rig exactly as
+# it was deployed and sunset-verified on 2026-07-11, before being rolled back
+# the same evening on user request. Kept as the starting point for the next
+# iteration. The live rig runs the v1 automations plus the A/B fixes from
+# shutters_test_rig.yaml.
+#
+# What v2 did — schedule membership per-shutter, not per-group:
+#
+#   input_select.shutter_morning_<name>   normal | delayed
+#   input_select.shutter_evening_<name>   normal | delayed | kids
+#   input_boolean.shutter_vent_<name>     ventilate on warm nights (checkbox)
+#
+# Morning:
+#   normal  = workday: later of sunrise & open_time_workday
+#             holiday: open_time_holiday          → temperature-based level
+#   delayed = the normal moment + morning_delayed_offset
+# Evening:
+#   normal  = sunset
+#   delayed = sunset + delayed_close_offset
+#   kids    = earlier of kids_close_time & sunset
+#   At its close moment each shutter goes to 0 — unless its vent checkbox is
+#   on AND binary_sensor.ventilation_recommended is on, in which case it goes
+#   to ventilation_close_level instead.
+#
+# Verified live at sunset 2026-07-11 18:39:56Z: evening=normal closed to
+# 0 / vent level per checkbox; kids picked the earlier of kids_close_time and
+# sunset and honored its vent checkbox; delayed closed at sunset + offset via
+# the restart-safe datetime helper; the delayed morning open path was
+# verified with an injected datetime (trace showed the computed level set).
+#
+# NOTE: automation.trigger cannot exercise the choose branches keyed on
+# `condition: trigger` (no trigger.id is injected) — test those by setting
+# the datetime helper to now + 75 s instead.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+input_datetime:
+  open_time_workday:
+    name: "Open time — workday (earliest)"
+    has_time: true
+    has_date: false
+    icon: mdi:weather-sunrise
+
+  open_time_holiday:
+    name: "Open time — holiday"
+    has_time: true
+    has_date: false
+    icon: mdi:alarm-snooze
+
+  kids_close_time:
+    name: "Kids close time"
+    has_time: true
+    has_date: false
+    icon: mdi:human-male-child
+
+  # Written by the automations, not tuning knobs (restart-safe schedule store).
+  morning_delayed_open_at:
+    name: "Morning delayed open — scheduled for"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-start
+
+  evening_delayed_close_at:
+    name: "Evening delayed close — scheduled for"
+    has_date: true
+    has_time: true
+    icon: mdi:clock-end
+
+input_number:
+  morning_delayed_offset:
+    name: "Morning delayed open — offset"
+    min: 0
+    max: 180
+    step: 5
+    unit_of_measurement: "min"
+    icon: mdi:weather-sunset-up
+    mode: box
+
+  delayed_close_offset:
+    name: "Evening delayed close — offset after sunset"
+    min: 0
+    max: 120
+    step: 5
+    unit_of_measurement: "min"
+    icon: mdi:weather-sunset-down
+    mode: box
+
+  ventilation_close_level:
+    name: "Ventilation — close level"
+    min: 0
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
+    mode: box
+
+  vent_day_temp_threshold:
+    name: "Ventilation — day max must exceed"
+    min: 15
+    max: 35
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+    mode: box
+
+  vent_night_temp_floor:
+    name: "Ventilation — night min floor"
+    min: 5
+    max: 25
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+    mode: box
+
+  vent_night_temp_ceiling:
+    name: "Ventilation — night min ceiling"
+    min: 15
+    max: 35
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+    mode: box
+
+  temp_full_open:
+    name: "Open level — temperature for full open"
+    min: 10
+    max: 35
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+    mode: box
+
+  temp_min_open:
+    name: "Open level — temperature for minimum open"
+    min: 15
+    max: 45
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+    mode: box
+
+  min_open_position:
+    name: "Open level — minimum open position"
+    min: 0
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+    mode: box
+
+  today_temp_max:
+    name: "Today — forecast max temperature"
+    min: -30
+    max: 50
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-high
+    mode: box
+
+  tonight_temp_min:
+    name: "Tonight — forecast min temperature (coming night)"
+    min: -30
+    max: 50
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-low
+    mode: box
+
+  shutter_pos_normal:
+    name: "Shutter position — normal"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+
+  shutter_pos_delayed:
+    name: "Shutter position — delayed"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+
+  shutter_pos_ventilation:
+    name: "Shutter position — ventilation"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+
+  shutter_pos_kids:
+    name: "Shutter position — kids"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+
+input_select:
+  shutter_morning_normal:
+    name: "Normal — morning schedule"
+    options: [normal, delayed]
+    icon: mdi:weather-sunny
+
+  shutter_morning_delayed:
+    name: "Delayed — morning schedule"
+    options: [normal, delayed]
+    icon: mdi:weather-sunny
+
+  shutter_morning_ventilation:
+    name: "Ventilation — morning schedule"
+    options: [normal, delayed]
+    icon: mdi:weather-sunny
+
+  shutter_morning_kids:
+    name: "Kids — morning schedule"
+    options: [normal, delayed]
+    icon: mdi:weather-sunny
+
+  shutter_evening_normal:
+    name: "Normal — evening schedule"
+    options: [normal, delayed, kids]
+    icon: mdi:weather-night
+
+  shutter_evening_delayed:
+    name: "Delayed — evening schedule"
+    options: [normal, delayed, kids]
+    icon: mdi:weather-night
+
+  shutter_evening_ventilation:
+    name: "Ventilation — evening schedule"
+    options: [normal, delayed, kids]
+    icon: mdi:weather-night
+
+  shutter_evening_kids:
+    name: "Kids — evening schedule"
+    options: [normal, delayed, kids]
+    icon: mdi:weather-night
+
+input_boolean:
+  shutter_vent_normal:
+    name: "Normal — ventilate on warm nights"
+    icon: mdi:weather-windy
+
+  shutter_vent_delayed:
+    name: "Delayed — ventilate on warm nights"
+    icon: mdi:weather-windy
+
+  shutter_vent_ventilation:
+    name: "Ventilation — ventilate on warm nights"
+    icon: mdi:weather-windy
+
+  shutter_vent_kids:
+    name: "Kids — ventilate on warm nights"
+    icon: mdi:weather-windy
+
+
+# ── Automations ───────────────────────────────────────────────────────────────
+
+automation:
+
+  # ── 1. Morning open (workday) ─────────────────────────────────────────────
+  # Opens the morning=normal shutters at MAX(sunrise, open_time_workday) and
+  # schedules the morning=delayed shutters for that moment + offset. Two
+  # triggers with cross-conditions ensure exactly one fires.
+
+  - id: shutters_test_morning_open_workday
+    alias: "Shutters test: morning open (workday)"
+    triggers:
+      - platform: time
+        at: input_datetime.open_time_workday
+      - platform: sun
+        event: sunrise
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.workday_sensor
+        state: "on"
+      - condition: template
+        value_template: >-
+          {{ now() >= today_at(states('input_datetime.open_time_workday')) }}
+      - condition: sun
+        after: sunrise
+    actions:
+      - variables:
+          position: &open_pos >-
+            {% set tmax  = states('input_number.today_temp_max') | float(20) %}
+            {% set tlow  = states('input_number.temp_full_open') | float(25) %}
+            {% set thigh = states('input_number.temp_min_open') | float(35) %}
+            {% set pmin  = states('input_number.min_open_position') | float(35) %}
+            {% set span  = [thigh - tlow, 0.1] | max %}
+            {{ [[100 - (tmax - tlow) / span * (100 - pmin), pmin] | max, 100] | min | round | int }}
+          targets: &morning_normal_targets >-
+            {% set ns = namespace(e=[]) %}
+            {% for n in ['normal', 'delayed', 'ventilation', 'kids'] %}
+              {% if is_state('input_select.shutter_morning_' ~ n, 'normal') %}
+                {% set ns.e = ns.e + ['input_number.shutter_pos_' ~ n] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.e }}
+      - if:
+          - condition: template
+            value_template: "{{ targets | count > 0 }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ targets }}"
+            data:
+              value: "{{ position }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.morning_delayed_open_at
+        data:
+          datetime: &delayed_open_at >-
+            {{ (now() + timedelta(minutes =
+                states('input_number.morning_delayed_offset') | float(30) | int))
+               .strftime('%Y-%m-%d %H:%M:%S') }}
+    mode: single
+
+
+  # ── 2. Morning open (holiday) ─────────────────────────────────────────────
+
+  - id: shutters_test_morning_open_holiday
+    alias: "Shutters test: morning open (holiday)"
+    triggers:
+      - platform: time
+        at: input_datetime.open_time_holiday
+      - platform: sun
+        event: sunrise
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.workday_sensor
+        state: "off"
+      - condition: template
+        value_template: >-
+          {{ now() >= today_at(states('input_datetime.open_time_holiday')) }}
+      - condition: sun
+        after: sunrise
+    actions:
+      - variables:
+          position: *open_pos
+          targets: *morning_normal_targets
+      - if:
+          - condition: template
+            value_template: "{{ targets | count > 0 }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ targets }}"
+            data:
+              value: "{{ position }}"
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.morning_delayed_open_at
+        data:
+          datetime: *delayed_open_at
+    mode: single
+
+
+  # ── 3. Morning open (delayed shutters) ────────────────────────────────────
+  # Fires on the datetime written by #1/#2. The open level is recomputed at
+  # fire time, so a fresher forecast can shift it slightly vs the normal open.
+
+  - id: shutters_test_morning_open_delayed
+    alias: "Shutters test: morning open (delayed)"
+    triggers:
+      - platform: time
+        at: input_datetime.morning_delayed_open_at
+    actions:
+      - variables:
+          position: *open_pos
+          targets: >-
+            {% set ns = namespace(e=[]) %}
+            {% for n in ['normal', 'delayed', 'ventilation', 'kids'] %}
+              {% if is_state('input_select.shutter_morning_' ~ n, 'delayed') %}
+                {% set ns.e = ns.e + ['input_number.shutter_pos_' ~ n] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.e }}
+      - if:
+          - condition: template
+            value_template: "{{ targets | count > 0 }}"
+        then:
+          - action: input_number.set_value
+            target:
+              entity_id: "{{ targets }}"
+            data:
+              value: "{{ position }}"
+    mode: single
+
+
+  # ── 4. Evening close (normal) ─────────────────────────────────────────────
+  # At sunset every evening=normal shutter closes — to ventilation_close_level
+  # when its vent checkbox is on and tonight qualifies, else to 0.
+
+  - id: shutters_test_evening_close
+    alias: "Shutters test: evening close (normal)"
+    triggers:
+      - platform: sun
+        event: sunset
+    actions:
+      - repeat:
+          for_each: >-
+            {% set ns = namespace(e=[]) %}
+            {% for n in ['normal', 'delayed', 'ventilation', 'kids'] %}
+              {% if is_state('input_select.shutter_evening_' ~ n, 'normal') %}
+                {% set ns.e = ns.e + [n] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.e }}
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: "input_number.shutter_pos_{{ repeat.item }}"
+              data:
+                value: &vent_or_zero >-
+                  {{ states('input_number.ventilation_close_level') | float(30) | int
+                     if (is_state('input_boolean.shutter_vent_' ~ repeat.item, 'on')
+                         and is_state('binary_sensor.ventilation_recommended', 'on'))
+                     else 0 }}
+    mode: single
+
+
+  # ── 5. Evening close (delayed) ────────────────────────────────────────────
+
+  - id: shutters_test_delayed_close
+    alias: "Shutters test: evening close (delayed)"
+    triggers:
+      - platform: sun
+        event: sunset
+        id: schedule
+      - platform: time
+        at: input_datetime.evening_delayed_close_at
+        id: close
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: schedule
+            sequence:
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.evening_delayed_close_at
+                data:
+                  datetime: >-
+                    {{ (now() + timedelta(minutes =
+                        states('input_number.delayed_close_offset') | float(20) | int))
+                       .strftime('%Y-%m-%d %H:%M:%S') }}
+          - conditions:
+              - condition: trigger
+                id: close
+            sequence:
+              - repeat:
+                  for_each: >-
+                    {% set ns = namespace(e=[]) %}
+                    {% for n in ['normal', 'delayed', 'ventilation', 'kids'] %}
+                      {% if is_state('input_select.shutter_evening_' ~ n, 'delayed') %}
+                        {% set ns.e = ns.e + [n] %}
+                      {% endif %}
+                    {% endfor %}
+                    {{ ns.e }}
+                  sequence:
+                    - action: input_number.set_value
+                      target:
+                        entity_id: "input_number.shutter_pos_{{ repeat.item }}"
+                      data:
+                        value: *vent_or_zero
+    mode: single
+
+
+  # ── 6. Evening close (kids) ───────────────────────────────────────────────
+  # Closes at the EARLIER of kids_close_time and sunset.
+
+  - id: shutters_test_kids_close
+    alias: "Shutters test: evening close (kids)"
+    triggers:
+      - platform: time
+        at: input_datetime.kids_close_time
+      - platform: sun
+        event: sunset
+    conditions:
+      - condition: template
+        value_template: >-
+          {{ (trigger.platform == 'time' and is_state('sun.sun', 'above_horizon'))
+             or (trigger.platform == 'sun'
+                 and now() < today_at(states('input_datetime.kids_close_time'))) }}
+    actions:
+      - repeat:
+          for_each: >-
+            {% set ns = namespace(e=[]) %}
+            {% for n in ['normal', 'delayed', 'ventilation', 'kids'] %}
+              {% if is_state('input_select.shutter_evening_' ~ n, 'kids') %}
+                {% set ns.e = ns.e + [n] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.e }}
+          sequence:
+            - action: input_number.set_value
+              target:
+                entity_id: "input_number.shutter_pos_{{ repeat.item }}"
+              data:
+                value: *vent_or_zero
+    mode: single

@@ -1,0 +1,236 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Shutter TEST RIG — API-deployed part (helpers + automations)
+#
+# The rig simulates shutters as input_number 0–100 % helpers so the schedule
+# can be validated on history charts before real covers are attached.
+# Deploy with ../deploy_ha.py (storage helpers via WebSocket, automations via
+# the REST config API) — this is NOT a file-based package:
+#
+#   python3 deploy_ha.py packages/shutters_test_rig.yaml
+#
+# Evening model (2026-07-12 restructure — replaces the four fixed groups):
+#   Three timing groups decide WHEN a shutter closes:
+#     normal   — at sunset
+#     delayed  — sunset + delayed_close_offset minutes
+#     kids     — at sunset or kids_close_time, whichever comes first
+#   A vent overlay decides HOW FAR: a shutter in the vent group closes to
+#   ventilation_close_level instead of 0 whenever
+#   binary_sensor.ventilation_recommended is 'on' at its group's close moment.
+#   Every vent shutter also belongs to exactly one timing group.
+#   The rig simulates one shutter per (group × vent) combination → 6 helpers.
+#   Morning open is unchanged: all shutters open to the temperature-derived
+#   position at sunrise/open-time.
+#
+# This file owns ONLY the simulated shutters and their schedule automations.
+# Everything the rig shares with the real package moved to shutters.yaml on
+# 2026-07-13 (single owner per entity): the tuning-knob helpers (open_time_*,
+# kids_close_time, delayed_close_offset, ventilation_close_level, temp_*
+# knobs), the vent threshold helpers, today_temp_max / tonight_temp_min and
+# the shutters_update_daily_temps automation (incl. the noon+ high-water-mark
+# decay fix). binary_sensor.ventilation_recommended is a config-entry template
+# helper (entry 01KWESNGYR3PDGP7ZDHV6X7AFQ) maintained via the options flow.
+#
+# Still live-only (in no file): the per-provider comparison helpers and the
+# shutters_test_provider_temps automation — kept until the OWM keep/drop
+# decision. The 2026-07-11 per-shutter-select attempt lives in
+# shutters_test_rig_v2.draft.yaml (NOT deployed).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+input_number:
+  # Simulated shutter positions, one per (timing group × vent) combination.
+  # 100 = fully open, 0 = fully closed. Written only by the automations below.
+  shutter_pos_normal:
+    name: "Shutter position — normal (test)"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+
+  shutter_pos_normal_vent:
+    name: "Shutter position — normal + vent (test)"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
+
+  shutter_pos_delayed:
+    name: "Shutter position — delayed (test)"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+
+  shutter_pos_delayed_vent:
+    name: "Shutter position — delayed + vent (test)"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
+
+  shutter_pos_kids:
+    name: "Shutter position — kids (test)"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter
+
+  shutter_pos_kids_vent:
+    name: "Shutter position — kids + vent (test)"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
+
+
+# ── Automations ───────────────────────────────────────────────────────────────
+
+automation:
+
+  # ── Morning open ───────────────────────────────────────────────────────────
+  # Opens ALL simulated shutters to a temperature-derived position: full open
+  # on cool days, tapering to min_open_position on hot days. Fires at the
+  # later of sunrise / the configured open time.
+
+  - id: shutters_test_morning_open_workday
+    alias: "Shutters test: morning open (workday)"
+    triggers:
+      - platform: time
+        at: input_datetime.open_time_workday
+      - platform: sun
+        event: sunrise
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.workday_sensor
+        state: "on"
+      - condition: template
+        value_template: "{{ now() >= today_at(states('input_datetime.open_time_workday')) }}"
+      - condition: sun
+        after: sunrise
+    actions:
+      - variables:
+          position: &open_pos >-
+            {% set tmax = states('input_number.today_temp_max')|float(20) %}
+            {% set tlow = states('input_number.temp_full_open')|float(25) %}
+            {% set thigh = states('input_number.temp_min_open')|float(35) %}
+            {% set pmin = states('input_number.min_open_position')|float(35) %}
+            {{ [[100 - (tmax - tlow)/(thigh - tlow)*(100 - pmin), pmin]|max, 100]|min|round|int }}
+      - action: input_number.set_value
+        target:
+          entity_id: &all_shutters
+            - input_number.shutter_pos_normal
+            - input_number.shutter_pos_normal_vent
+            - input_number.shutter_pos_delayed
+            - input_number.shutter_pos_delayed_vent
+            - input_number.shutter_pos_kids
+            - input_number.shutter_pos_kids_vent
+        data:
+          value: "{{ position }}"
+    mode: single
+
+  - id: shutters_test_morning_open_holiday
+    alias: "Shutters test: morning open (holiday)"
+    triggers:
+      - platform: time
+        at: input_datetime.open_time_holiday
+      - platform: sun
+        event: sunrise
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.workday_sensor
+        state: "off"
+      - condition: template
+        value_template: "{{ now() >= today_at(states('input_datetime.open_time_holiday')) }}"
+      - condition: sun
+        after: sunrise
+    actions:
+      - variables:
+          position: *open_pos
+      - action: input_number.set_value
+        target:
+          entity_id: *all_shutters
+        data:
+          value: "{{ position }}"
+    mode: single
+
+  # ── Evening close, per timing group ────────────────────────────────────────
+  # Each group closes its plain member to 0 and its vent member to
+  # ventilation_close_level (only while ventilation is recommended — the
+  # decision is read at the group's own close moment, so a late flip of the
+  # binary sensor affects later-closing groups).
+
+  - id: shutters_test_evening_close
+    alias: "Shutters test: evening close (normal group)"
+    triggers:
+      - platform: sun
+        event: sunset
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.shutter_pos_normal
+        data:
+          value: 0
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.shutter_pos_normal_vent
+        data:
+          value: &vent_or_zero >-
+            {{ states('input_number.ventilation_close_level')|float(30)|int
+               if is_state('binary_sensor.ventilation_recommended','on') else 0 }}
+    mode: single
+
+  - id: shutters_test_delayed_close
+    alias: "Shutters test: delayed close (delayed group)"
+    triggers:
+      - platform: sun
+        event: sunset
+    actions:
+      - delay:
+          minutes: "{{ states('input_number.delayed_close_offset')|float(20)|int }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.shutter_pos_delayed
+        data:
+          value: 0
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.shutter_pos_delayed_vent
+        data:
+          value: *vent_or_zero
+    mode: single
+
+  - id: shutters_test_kids_close
+    alias: "Shutters test: kids close (kids group)"
+    triggers:
+      - platform: time
+        at: input_datetime.kids_close_time
+      - platform: sun
+        event: sunset
+    conditions:
+      # earlier-of logic: the time trigger only counts before sunset, the
+      # sunset trigger only counts before kids_close_time
+      - condition: template
+        value_template: >-
+          {{ (trigger.platform == 'time' and is_state('sun.sun','above_horizon'))
+             or (trigger.platform == 'sun'
+                 and now() < today_at(states('input_datetime.kids_close_time'))) }}
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.shutter_pos_kids
+        data:
+          value: 0
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.shutter_pos_kids_vent
+        data:
+          value: *vent_or_zero
+    mode: single
