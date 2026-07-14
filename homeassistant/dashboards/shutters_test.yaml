@@ -1,70 +1,26 @@
-# Shutter test dashboard — validate the simulated shutter schedule before any
-# real cover is driven. The six input_number.shutter_pos_* helpers (one per
-# timing group × vent combination) are written by the "Shutters test: …"
-# automations; watch their history over a few days.
+# Shutters monitor dashboard — history charts + tuning knobs for the LIVE
+# shutter schedule (the simulated test rig was retired 2026-07-14 after the
+# real covers took over; url_path stays /shutters-test from that era).
 #
-# Built-in cards only (no HACS). "sections" view requires HA 2024.3+.
-# Pushed to HA at /shutters-test via push_dashboard.py.
+# Positions come from 6 config-entry template sensors mirroring the cover
+# groups' current_position attribute (sensor.shutter_pos_* — created via the
+# template config flow; deploy_ha.py cannot push them). The forecast chart is
+# fed by shutters_update_daily_temps (Met.no, drives the schedule) and the
+# shutters_test_provider_temps comparison automation (Open-Meteo benchmark,
+# live-only — delete both openmeteo helpers + that automation when the
+# comparison has served its purpose).
+#
+# Built-in cards only. Pushed to HA at /shutters-test via push_dashboard.py.
 
-title: Shutter test
+title: Shutters monitor
 views:
-  - title: Shutter test
-    path: shutter-test
-    icon: mdi:window-shutter-cog
+  - title: Shutters monitor
+    path: shutter-monitor
+    icon: mdi:chart-line
     type: sections
     max_columns: 2
     sections:
-      # ── Current simulated positions ──────────────────────────────
-      # One gauge per (timing group × vent) shutter; groups share a color
-      # (built-in gauges only offer blue/yellow/red/green, set via a single
-      # full-range severity band; thresholds of 200 never draw).
-      - type: grid
-        column_span: 2
-        cards:
-          - type: heading
-            heading: Current positions (simulated)
-          - type: gauge
-            entity: input_number.shutter_pos_normal
-            name: Normal
-            min: 0
-            max: 100
-            needle: true
-          - type: gauge
-            entity: input_number.shutter_pos_normal_vent
-            name: Normal + vent
-            min: 0
-            max: 100
-            needle: true
-          - type: gauge
-            entity: input_number.shutter_pos_delayed
-            name: Delayed
-            min: 0
-            max: 100
-            needle: true
-            severity: {yellow: 0, green: 200, red: 200}
-          - type: gauge
-            entity: input_number.shutter_pos_delayed_vent
-            name: Delayed + vent
-            min: 0
-            max: 100
-            needle: true
-            severity: {yellow: 0, green: 200, red: 200}
-          - type: gauge
-            entity: input_number.shutter_pos_kids
-            name: Kids
-            min: 0
-            max: 100
-            needle: true
-            severity: {green: 0, yellow: 200, red: 200}
-          - type: gauge
-            entity: input_number.shutter_pos_kids_vent
-            name: Kids + vent
-            min: 0
-            max: 100
-            needle: true
-            severity: {green: 0, yellow: 200, red: 200}
-
-      # ── History of the six signals (3 days) ──────────────────────
+      # ── Real cover-group positions (3 days) ──────────────────────
       - type: grid
         column_span: 2
         cards:
@@ -72,17 +28,17 @@ views:
             title: Shutter positions — 3-day history (%)
             hours_to_show: 72
             entities:
-              - entity: input_number.shutter_pos_normal
+              - entity: sensor.shutter_pos_normal
                 name: Normal
-              - entity: input_number.shutter_pos_normal_vent
+              - entity: sensor.shutter_pos_normal_vent
                 name: Normal + vent
-              - entity: input_number.shutter_pos_delayed
+              - entity: sensor.shutter_pos_delayed
                 name: Delayed
-              - entity: input_number.shutter_pos_delayed_vent
+              - entity: sensor.shutter_pos_delayed_vent
                 name: Delayed + vent
-              - entity: input_number.shutter_pos_kids
+              - entity: sensor.shutter_pos_kids
                 name: Kids
-              - entity: input_number.shutter_pos_kids_vent
+              - entity: sensor.shutter_pos_kids_vent
                 name: Kids + vent
 
       # ── Forecast inputs driving the schedule ─────────────────────
@@ -94,11 +50,11 @@ views:
             hours_to_show: 72
             entities:
               - entity: input_number.today_temp_max
-                name: Max — Met.no (drives rig)
+                name: Max — Met.no (drives schedule)
               - entity: input_number.today_temp_max_openmeteo
                 name: Max — Open-Meteo
               - entity: input_number.tonight_temp_min
-                name: Night min — Met.no (drives rig)
+                name: Night min — Met.no (drives schedule)
               - entity: input_number.tonight_temp_min_openmeteo
                 name: Night min — Open-Meteo
               - entity: binary_sensor.ventilation_recommended
@@ -119,7 +75,9 @@ views:
               - input_number.vent_day_temp_threshold
               - input_number.vent_night_temp_floor
               - input_number.vent_night_temp_ceiling
-              - input_number.ventilation_close_level
+              - input_number.ventilation_close_level_normal
+              - input_number.ventilation_close_level_delayed
+              - input_number.ventilation_close_level_kids
               - binary_sensor.ventilation_recommended
               - type: section
                 label: Temperature-based open level
