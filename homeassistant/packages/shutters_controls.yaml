@@ -5,16 +5,16 @@
 #
 #   python3 deploy_ha.py packages/shutters_controls.yaml
 #
-# Kept separate from shutters.yaml on purpose: that package's automations are
-# not deployed yet (they drive the real covers on a schedule), while this
-# script is safe to deploy — it only moves covers when invoked from the
+# Kept separate from shutters.yaml on purpose: that package owns the schedule
+# automations, while this script only moves covers when invoked from the
 # dashboard buttons.
 #
 # script.shutter_reset sets the given covers to where the group×vent schedule
 # says they should be RIGHT NOW:
 #   - between the morning open moment (later of sunrise / today's open time)
 #     and the cover's own close moment → the temperature-derived open level
-#   - otherwise → 0, or ventilation_close_level for vent-group members while
+#   - otherwise → 0, or the member's own group ventilation level
+#     (ventilation_close_level_{normal,delayed,kids}) while
 #     binary_sensor.ventilation_recommended is on
 # The close moment follows the cover's timing group: normal → sunset,
 # delayed → sunset + delayed_close_offset, kids → earlier of sunset /
@@ -73,11 +73,18 @@ script:
           for_each: "{{ targets }}"
           sequence:
             - variables:
-                vent: >-
-                  {{ repeat.item in
-                     (state_attr('cover.shutters_normal_vent','entity_id') or [])
-                     + (state_attr('cover.shutters_delayed_vent','entity_id') or [])
-                     + (state_attr('cover.shutters_kids_vent','entity_id') or []) }}
+                # The cover's vent-group close level, or -1 when it is not in
+                # any vent group (i.e. it closes fully).
+                vent_level: >-
+                  {% if repeat.item in (state_attr('cover.shutters_normal_vent','entity_id') or []) %}
+                    {{ states('input_number.ventilation_close_level_normal')|float(30)|int }}
+                  {% elif repeat.item in (state_attr('cover.shutters_delayed_vent','entity_id') or []) %}
+                    {{ states('input_number.ventilation_close_level_delayed')|float(30)|int }}
+                  {% elif repeat.item in (state_attr('cover.shutters_kids_vent','entity_id') or []) %}
+                    {{ states('input_number.ventilation_close_level_kids')|float(30)|int }}
+                  {% else %}
+                    -1
+                  {% endif %}
                 close_ts: >-
                   {% set kids = (state_attr('cover.shutters_kids','entity_id') or [])
                               + (state_attr('cover.shutters_kids_vent','entity_id') or []) %}
@@ -98,8 +105,8 @@ script:
                                    and as_timestamp(now()) < close_ts|float %}
                   {% if daytime %}
                     {{ open_level }}
-                  {% elif vent and is_state('binary_sensor.ventilation_recommended','on') %}
-                    {{ states('input_number.ventilation_close_level')|float(30)|int }}
+                  {% elif vent_level|int >= 0 and is_state('binary_sensor.ventilation_recommended','on') %}
+                    {{ vent_level|int }}
                   {% else %}
                     0
                   {% endif %}

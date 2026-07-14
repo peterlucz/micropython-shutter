@@ -6,20 +6,21 @@
 #
 #   python3 deploy_ha.py packages/shutters.yaml
 #
-# ⚠ NOT YET DEPLOYED — deploying this drives the REAL covers. The simulated
-# test rig (shutters_test_rig.yaml) validates the same schedule against
-# input_number helpers first; both read the same tuning-knob helpers below,
-# so what the rig charts is what these automations will do.
+# DEPLOYED 2026-07-13 — this drives the REAL covers. The schedule was
+# validated first on a simulated test rig (input_number stand-ins for the
+# covers; retired 2026-07-14, see git history of packages/shutters_test_rig.yaml).
+# The /shutters-test dashboard lives on as a monitor: real group positions
+# via sensor.shutter_pos_* template sensors + the forecast/vent chart.
 #
 # Model:
 #   Three timing groups decide WHEN a shutter closes in the evening:
 #     normal   — at sunset
 #     delayed  — sunset + delayed_close_offset minutes
 #     kids     — at sunset or kids_close_time, whichever comes first
-#   A vent overlay decides HOW FAR: shutters in a *_vent group close to
-#   ventilation_close_level instead of 0 whenever
-#   binary_sensor.ventilation_recommended is 'on' at their group's close
-#   moment. Morning open is common: every group opens to the temperature-
+#   A vent overlay decides HOW FAR: shutters in a *_vent group close to that
+#   group's ventilation_close_level_{normal,delayed,kids} instead of 0
+#   whenever binary_sensor.ventilation_recommended is 'on' at their group's
+#   close moment. Morning open is common: every group opens to the temperature-
 #   derived level at the later of sunrise / the configured open time.
 #
 # Prerequisites:
@@ -89,8 +90,28 @@ input_number:
     icon: mdi:weather-sunset-down
     mode: box
 
-  ventilation_close_level:
-    name: "Ventilation — close level"             # live: 55
+  # Per-group ventilation close levels (split from the single
+  # ventilation_close_level 2026-07-13; all three seeded with its value, 55).
+  ventilation_close_level_normal:
+    name: "Ventilation close level — normal group"    # live: 55
+    min: 0
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
+    mode: box
+
+  ventilation_close_level_delayed:
+    name: "Ventilation close level — delayed group"   # live: 55
+    min: 0
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    icon: mdi:window-shutter-open
+    mode: box
+
+  ventilation_close_level_kids:
+    name: "Ventilation close level — kids group"      # live: 55
     min: 0
     max: 100
     step: 5
@@ -277,9 +298,10 @@ automation:
     mode: single
 
   # ── 3. Evening close — normal group ───────────────────────────────────────
-  # At sunset: plain members fully closed, vent members to ventilation_close_level
-  # while ventilation is recommended (the decision is read at each group's own
-  # close moment, so a late flip of the binary sensor affects later groups).
+  # At sunset: plain members fully closed, vent members to their group's own
+  # ventilation_close_level_* while ventilation is recommended (the decision
+  # is read at each group's own close moment, so a late flip of the binary
+  # sensor affects later groups).
 
   - id: shutters_close_normal
     alias: "Shutters: evening close (normal group)"
@@ -296,8 +318,8 @@ automation:
         target:
           entity_id: cover.shutters_normal_vent
         data:
-          position: &vent_or_zero >-
-            {{ states('input_number.ventilation_close_level')|float(30)|int
+          position: >-
+            {{ states('input_number.ventilation_close_level_normal')|float(30)|int
                if is_state('binary_sensor.ventilation_recommended','on') else 0 }}
     mode: single
 
@@ -352,7 +374,9 @@ automation:
                 target:
                   entity_id: cover.shutters_delayed_vent
                 data:
-                  position: *vent_or_zero
+                  position: >-
+                    {{ states('input_number.ventilation_close_level_delayed')|float(30)|int
+                       if is_state('binary_sensor.ventilation_recommended','on') else 0 }}
     mode: single
 
   # ── 5. Evening close — kids group ─────────────────────────────────────────
@@ -383,7 +407,9 @@ automation:
         target:
           entity_id: cover.shutters_kids_vent
         data:
-          position: *vent_or_zero
+          position: >-
+            {{ states('input_number.ventilation_close_level_kids')|float(30)|int
+               if is_state('binary_sensor.ventilation_recommended','on') else 0 }}
     mode: single
 
   # ── 6. Update daily forecast temperatures ─────────────────────────────────
