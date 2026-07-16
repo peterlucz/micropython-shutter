@@ -25,7 +25,8 @@
 #
 # Prerequisites:
 #   - Met.no integration (weather.forecast_home)
-#   - Workday binary sensor for Hungary (binary_sensor.workday_sensor)
+#   - Workday binary sensor for Hungary (binary_sensor.workday_sensor);
+#     overridden by input_number.holiday_days_left > 0 (see #2b)
 #   - Cover entities created via Pico MQTT Discovery
 #   - Cover groups (created 2026-07-13 via the group-helper config flow):
 #       cover.shutters_normal         Terasz2, Konyha, Dolgozó
@@ -81,6 +82,20 @@ input_datetime:
     icon: mdi:clock-end
 
 input_number:
+  # Holiday override: while above zero, mornings use the holiday program
+  # (open_time_holiday) even on workdays. Counts remaining holiday days
+  # INCLUDING today — set it on the first holiday morning (e.g. 5 = today
+  # plus four more days); the countdown automation ticks it down by one
+  # every midnight until zero, when the workday schedule resumes.
+  holiday_days_left:
+    name: "Holiday — days left"
+    min: 0
+    max: 60
+    step: 1
+    unit_of_measurement: "days"
+    icon: mdi:beach
+    mode: box
+
   delayed_close_offset:
     name: "Delayed — close offset after sunset"   # live: 25
     min: 0
@@ -225,6 +240,9 @@ automation:
       - condition: state
         entity_id: binary_sensor.workday_sensor
         state: "on"
+      - condition: numeric_state
+        entity_id: input_number.holiday_days_left
+        below: 1
       - condition: template
         value_template: "{{ now() >= today_at(states('input_datetime.open_time_workday')) }}"
       - condition: sun
@@ -261,7 +279,8 @@ automation:
     mode: single
 
   # ── 2. Morning open (holiday) ─────────────────────────────────────────────
-  # Same as #1 on weekends / Hungarian public holidays, with its own open time.
+  # Same as #1 on weekends / Hungarian public holidays, with its own open
+  # time. Also fires on workdays while holiday_days_left is above zero.
 
   - id: shutters_morning_open_holiday
     alias: "Shutters: morning open (holiday)"
@@ -271,9 +290,14 @@ automation:
       - platform: sun
         event: sunrise
     conditions:
-      - condition: state
-        entity_id: binary_sensor.workday_sensor
-        state: "off"
+      - condition: or
+        conditions:
+          - condition: state
+            entity_id: binary_sensor.workday_sensor
+            state: "off"
+          - condition: numeric_state
+            entity_id: input_number.holiday_days_left
+            above: 0
       - condition: template
         value_template: "{{ now() >= today_at(states('input_datetime.open_time_holiday')) }}"
       - condition: sun
@@ -295,6 +319,28 @@ automation:
               entity_id: cover.shutters_delayed
             data:
               position: "{{ position }}"
+    mode: single
+
+  # ── 2b. Holiday countdown ─────────────────────────────────────────────────
+  # Ticks holiday_days_left down by one every midnight until it reaches
+  # zero; while it is above zero, #1 stands down and #2 runs even on
+  # workdays (and the reset script picks the holiday open time).
+
+  - id: shutters_holiday_countdown
+    alias: "Shutters: holiday countdown"
+    triggers:
+      - platform: time
+        at: "00:00:00"
+    conditions:
+      - condition: numeric_state
+        entity_id: input_number.holiday_days_left
+        above: 0
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.holiday_days_left
+        data:
+          value: "{{ [states('input_number.holiday_days_left')|int(0) - 1, 0]|max }}"
     mode: single
 
   # ── 3. Evening close — normal group ───────────────────────────────────────

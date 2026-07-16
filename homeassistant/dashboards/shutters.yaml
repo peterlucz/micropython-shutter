@@ -245,6 +245,17 @@ views:
       - type: grid
         column_span: 2
         cards:
+          # Holiday override: >0 = mornings use the holiday program even
+          # on workdays; ticks down each midnight (packages/shutters.yaml).
+          - type: tile
+            entity: input_number.holiday_days_left
+            name: Holiday days left
+            color: amber
+            features:
+              - type: numeric-input
+                style: buttons
+            features_position: inline
+            grid_options: {columns: 12, rows: 1}
           - type: button
             name: Reset ALL shutters to schedule
             icon: mdi:restore-alert

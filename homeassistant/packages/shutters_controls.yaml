@@ -57,6 +57,7 @@ script:
           open_time: >-
             {{ states('input_datetime.open_time_workday')
                if is_state('binary_sensor.workday_sensor','on')
+                  and states('input_number.holiday_days_left')|int(0) <= 0
                else states('input_datetime.open_time_holiday') }}
           # True once today's sunrise is behind us (also all evening/night —
           # the "night" outcome then comes from the close-time comparison).
