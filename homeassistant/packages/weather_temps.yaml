@@ -5,9 +5,12 @@
 #
 # Feeds the temperature chart on the weather dashboard. Three series:
 #   * sensor.outside_temp_1_temperature — the real outside sensor (as-is)
-#   * input_number.outside_temp_official — mirror of weather.forecast_home's
-#     current temperature attribute (weather entities aren't chartable in a
-#     history graph, numeric helpers are)
+#   * sensor.outside_temperature_met_no — template sensor helper (config
+#     entry, NOT in this file): state template
+#     "{{ state_attr('weather.forecast_home', 'temperature') }}",
+#     device_class temperature, state_class measurement (the state_class
+#     gives it long-term statistics, which the statistics-graph card needs;
+#     input_number never gets those, which is why this isn't a helper here)
 #   * "predicted a day ago for now" — needs two pieces:
 #       1. input_number.outside_temp_forecast_24h, written hourly with what
 #          Met.no predicts for now+24h (recorder keeps its history)
@@ -34,15 +37,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 input_number:
-  outside_temp_official:
-    name: "Outside temperature — Met.no"
-    min: -20
-    max: 60
-    step: 0.1
-    unit_of_measurement: "°C"
-    icon: mdi:thermometer
-    mode: box
-
   outside_temp_forecast_24h:
     name: "Outside temperature — Met.no forecast for +24h"
     min: -20
@@ -53,35 +47,6 @@ input_number:
     mode: box
 
 automation:
-  - id: weather_record_official_temp
-    alias: "Weather: record Met.no current temperature"
-    description: >-
-      Mirrors weather.forecast_home's temperature attribute into
-      input_number.outside_temp_official on every change (and after HA
-      start) so it can be drawn in a history graph.
-    triggers:
-      - platform: state
-        entity_id: weather.forecast_home
-        attribute: temperature
-      - platform: homeassistant
-        event: start
-    conditions:
-      # Plausibility guard: reject integration glitches (a bare helper
-      # defaults to its min, and a bad Met.no reading would poison the
-      # chart the same way).
-      - condition: template
-        value_template: >-
-          {% set t = state_attr('weather.forecast_home', 'temperature') %}
-          {{ t is not none and -25 <= t <= 55 }}
-    actions:
-      - action: input_number.set_value
-        target:
-          entity_id: input_number.outside_temp_official
-        data:
-          value: "{{ state_attr('weather.forecast_home', 'temperature') }}"
-    mode: single
-    max_exceeded: silent
-
   - id: weather_record_forecast_24h
     alias: "Weather: record forecast for +24h"
     description: >-

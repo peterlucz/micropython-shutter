@@ -45,15 +45,21 @@ views:
           - type: heading
             heading: Temperature — measured vs forecast
             icon: mdi:thermometer-lines
-          # fit_y_data: the axis follows the data instead of the helpers'
-          # min/max attributes (which would pin the floor at -20/-40).
-          - type: history-graph
-            hours_to_show: 48
+          # Statistics graph (hourly means) instead of a history graph:
+          # the averaging smooths the sensor jitter, and all three series
+          # land on the same hourly grid. Needs long-term statistics, hence
+          # the template sensor for Met.no (see packages/weather_temps.yaml).
+          - type: statistics-graph
+            chart_type: line
+            period: hour
+            days_to_show: 2
+            stat_types:
+              - mean
             fit_y_data: true
             entities:
               - entity: sensor.outside_temp_1_temperature
                 name: Measured (outside sensor)
-              - entity: input_number.outside_temp_official
+              - entity: sensor.outside_temperature_met_no
                 name: Met.no current
               - entity: sensor.outside_temperature_predicted_a_day_ago
                 name: Predicted a day ago
@@ -71,7 +77,7 @@ views:
               - {from: 35, color: "#f44336"}
             grid_options: {columns: 4, rows: 2}
           - type: gauge
-            entity: input_number.outside_temp_official
+            entity: sensor.outside_temperature_met_no
             name: Met.no
             min: -20
             max: 50
