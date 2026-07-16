@@ -66,8 +66,13 @@ automation:
       - platform: homeassistant
         event: start
     conditions:
+      # Plausibility guard: reject integration glitches (a bare helper
+      # defaults to its min, and a bad Met.no reading would poison the
+      # chart the same way).
       - condition: template
-        value_template: "{{ state_attr('weather.forecast_home', 'temperature') is not none }}"
+        value_template: >-
+          {% set t = state_attr('weather.forecast_home', 'temperature') %}
+          {{ t is not none and -25 <= t <= 55 }}
     actions:
       - action: input_number.set_value
         target:
@@ -106,7 +111,7 @@ automation:
             {% endfor %}
             {{ ns.v }}
       - condition: template
-        value_template: "{{ predicted not in (none, 'None', '') }}"
+        value_template: "{{ predicted not in (none, 'None', '') and -25 <= predicted | float(-99) <= 55 }}"
       - action: input_number.set_value
         target:
           entity_id: input_number.outside_temp_forecast_24h
