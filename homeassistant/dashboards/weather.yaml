@@ -45,8 +45,11 @@ views:
           - type: heading
             heading: Temperature — measured vs forecast
             icon: mdi:thermometer-lines
+          # fit_y_data: the axis follows the data instead of the helpers'
+          # min/max attributes (which would pin the floor at -20/-40).
           - type: history-graph
             hours_to_show: 48
+            fit_y_data: true
             entities:
               - entity: sensor.outside_temp_1_temperature
                 name: Measured (outside sensor)
