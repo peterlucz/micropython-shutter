@@ -1,0 +1,116 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Outside temperature chart series: measured vs Met.no vs day-old prediction
+#
+# Deploy:  python3 deploy_ha.py packages/weather_temps.yaml
+#
+# Feeds the temperature chart on the weather dashboard. Three series:
+#   * sensor.outside_temp_1_temperature — the real outside sensor (as-is)
+#   * input_number.outside_temp_official — mirror of weather.forecast_home's
+#     current temperature attribute (weather entities aren't chartable in a
+#     history graph, numeric helpers are)
+#   * "predicted a day ago for now" — needs two pieces:
+#       1. input_number.outside_temp_forecast_24h, written hourly with what
+#          Met.no predicts for now+24h (recorder keeps its history)
+#       2. a SQL sensor (config entry, NOT deployable from this file — created
+#          once via the config-flow REST API, see below) that returns that
+#          helper's recorded value from 24 hours ago. At any time T that is
+#          the prediction made at T-24h for T — correctly time-aligned, so
+#          its own history charts directly against the measured series.
+#
+# SQL sensor "Outside temperature predicted a day ago"
+# (sensor.outside_temperature_predicted_a_day_ago), query against the
+# default recorder DB (SQLite):
+#
+#   SELECT s.state FROM states s
+#   JOIN states_meta m ON s.metadata_id = m.metadata_id
+#   WHERE m.entity_id = 'input_number.outside_temp_forecast_24h'
+#     AND s.last_updated_ts <= CAST(strftime('%s','now') AS REAL) - 86400
+#     AND s.state NOT IN ('unknown', 'unavailable')
+#   ORDER BY s.last_updated_ts DESC LIMIT 1
+#
+# The lagged series only has data 24 h after first deploy (predictions made
+# before that don't exist). Recorder purge (default 10 days) is plenty for
+# the 24 h look-back.
+# ─────────────────────────────────────────────────────────────────────────────
+
+input_number:
+  outside_temp_official:
+    name: "Outside temperature — Met.no"
+    min: -20
+    max: 60
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+    mode: box
+
+  outside_temp_forecast_24h:
+    name: "Outside temperature — Met.no forecast for +24h"
+    min: -20
+    max: 60
+    step: 0.1
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer-chevron-up
+    mode: box
+
+automation:
+  - id: weather_record_official_temp
+    alias: "Weather: record Met.no current temperature"
+    description: >-
+      Mirrors weather.forecast_home's temperature attribute into
+      input_number.outside_temp_official on every change (and after HA
+      start) so it can be drawn in a history graph.
+    triggers:
+      - platform: state
+        entity_id: weather.forecast_home
+        attribute: temperature
+      - platform: homeassistant
+        event: start
+    conditions:
+      - condition: template
+        value_template: "{{ state_attr('weather.forecast_home', 'temperature') is not none }}"
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.outside_temp_official
+        data:
+          value: "{{ state_attr('weather.forecast_home', 'temperature') }}"
+    mode: single
+    max_exceeded: silent
+
+  - id: weather_record_forecast_24h
+    alias: "Weather: record forecast for +24h"
+    description: >-
+      Every hour, stores Met.no's predicted temperature for 24 hours from
+      now in input_number.outside_temp_forecast_24h. The SQL sensor reads
+      this helper's history with a 24 h lag to get "predicted a day ago
+      for now".
+    triggers:
+      - platform: time_pattern
+        minutes: 0
+      - platform: homeassistant
+        event: start
+    actions:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_home
+        data:
+          type: hourly
+        response_variable: fc
+      - variables:
+          predicted: >-
+            {% set t = as_timestamp(now()) + 86400 %}
+            {% set ns = namespace(v=none, d=1.0e9) %}
+            {% for f in fc['weather.forecast_home'].forecast %}
+              {% set diff = (as_timestamp(f.datetime) - t) | abs %}
+              {% if diff < ns.d %}{% set ns.d = diff %}{% set ns.v = f.temperature %}{% endif %}
+            {% endfor %}
+            {{ ns.v }}
+      - condition: template
+        value_template: "{{ predicted not in (none, 'None', '') }}"
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.outside_temp_forecast_24h
+        data:
+          value: "{{ predicted }}"
+    mode: single
+    max_exceeded: silent

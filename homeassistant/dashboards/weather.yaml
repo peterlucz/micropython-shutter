@@ -1,15 +1,13 @@
-# Weather dashboard — current conditions + daily/hourly forecast
+# Weather dashboard — daily + hourly forecast, single column
 # Entity: weather.forecast_home (Met.no — the working integration; OWM was abandoned)
 #
-# Layout: HA "sections" view (requires HA 2024.3+). The hourly forecast card is
-# given full width so the built-in weather-forecast card renders as many hourly
-# columns as possible (count scales with width — wide screens approach ~24h).
-# A true line/area chart of the forecast needs a custom card (e.g. ApexCharts);
-# this stays 100% built-in, no HACS/resources.
+# The daily card keeps show_current: true, so current conditions sit on top
+# of the 5-day forecast. The hourly card uses forecast_slots (undocumented
+# but supported by the built-in weather-forecast card, default 5) to show
+# 10 hours; on narrow screens the extra slots scroll horizontally inside
+# the card.
 #
-# How to use: Settings → Dashboards → "+ Add dashboard" → New from scratch → open
-# it → ⋮ Edit → ⋮ Raw configuration editor → paste from `title:` down.
-# (Already pushed to HA at /weather-dashboard via the WebSocket API.)
+# Built-in cards only. Pushed to HA at /weather-dashboard via push_dashboard.py.
 
 title: Weather
 views:
@@ -17,36 +15,12 @@ views:
     path: weather
     icon: mdi:weather-partly-cloudy
     type: sections
-    max_columns: 2
+    max_columns: 1
     sections:
-      # ── Current conditions summary ───────────────────────────────
       - type: grid
         cards:
-          - type: markdown
-            content: >
-              ## {{ states('weather.forecast_home') | replace('-', ' ') |
-              replace('_', ' ') | title }}
 
-
-              # {{ state_attr('weather.forecast_home', 'temperature') }}{{
-              state_attr('weather.forecast_home', 'temperature_unit') }}
-
-
-              | | |
-              |---|---|
-              | 💧 Humidity | {{ state_attr('weather.forecast_home', 'humidity') }} % |
-              | 🌬️ Wind | {{ state_attr('weather.forecast_home', 'wind_speed') }} {{ state_attr('weather.forecast_home', 'wind_speed_unit') }} ({{ state_attr('weather.forecast_home', 'wind_bearing') }}°) |
-              | 🧭 Pressure | {{ state_attr('weather.forecast_home', 'pressure') }} {{ state_attr('weather.forecast_home', 'pressure_unit') }} |
-              {% if state_attr('weather.forecast_home', 'cloud_coverage') is not none -%}
-              | ☁️ Cloud cover | {{ state_attr('weather.forecast_home', 'cloud_coverage') }} % |
-              {%- endif %}
-
-
-              _Updated {{ relative_time(states.weather.forecast_home.last_updated) }} ago_
-
-      # ── Daily forecast ───────────────────────────────────────────
-      - type: grid
-        cards:
+          # ── Current + 5-day forecast ─────────────────────────────
           - type: weather-forecast
             entity: weather.forecast_home
             name: Daily forecast
@@ -55,15 +29,57 @@ views:
             show_forecast: true
             secondary_info_attribute: humidity
 
-      # ── Hourly forecast (full width → most hours, with precip bars) ─
-      - type: grid
-        column_span: 2
-        cards:
+          # ── Hourly forecast (next 10 h) ──────────────────────────
           - type: weather-forecast
             entity: weather.forecast_home
-            name: Hourly forecast (next hours)
+            name: Hourly forecast
             forecast_type: hourly
+            forecast_slots: 10
             show_current: false
             show_forecast: true
-            grid_options:
-              columns: full
+
+          # ── Measured vs Met.no vs day-old prediction ─────────────
+          # Series plumbing lives in packages/weather_temps.yaml (the
+          # "predicted a day ago" SQL sensor only has data from 24 h
+          # after first deploy, 2026-07-17 evening onwards).
+          - type: heading
+            heading: Temperature — measured vs forecast
+            icon: mdi:thermometer-lines
+          - type: history-graph
+            hours_to_show: 48
+            entities:
+              - entity: sensor.outside_temp_1_temperature
+                name: Measured (outside sensor)
+              - entity: input_number.outside_temp_official
+                name: Met.no current
+              - entity: sensor.outside_temperature_predicted_a_day_ago
+                name: Predicted a day ago
+          - type: gauge
+            entity: sensor.outside_temp_1_temperature
+            name: Measured
+            min: -20
+            max: 50
+            needle: true
+            segments: &temp_segments
+              - {from: -20, color: "#3d5afe"}
+              - {from: 0, color: "#03a9f4"}
+              - {from: 15, color: "#4caf50"}
+              - {from: 27, color: "#ff9800"}
+              - {from: 35, color: "#f44336"}
+            grid_options: {columns: 4, rows: 2}
+          - type: gauge
+            entity: input_number.outside_temp_official
+            name: Met.no
+            min: -20
+            max: 50
+            needle: true
+            segments: *temp_segments
+            grid_options: {columns: 4, rows: 2}
+          - type: gauge
+            entity: sensor.outside_temperature_predicted_a_day_ago
+            name: Predicted −24h
+            min: -20
+            max: 50
+            needle: true
+            segments: *temp_segments
+            grid_options: {columns: 4, rows: 2}
