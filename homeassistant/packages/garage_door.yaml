@@ -14,6 +14,13 @@
 # "duration": 1000, so the firmware itself drops the relay after 1 s even if
 # HA or WiFi dies mid-pulse (a latched contact would block the opener).
 # Keep the helper's maximum below that backstop.
+#
+# Accidental-tap guard: the garage dashboard never touches the relay switch
+# directly. It starts timer.garage_door_release (a 1-minute arming window,
+# restarted on re-press) and calls script.garage_door_open, which only pulses
+# the relay while that timer is active. The window stays open for the full
+# minute so a second press can stop/reverse the door. No restore: an HA
+# restart drops the window, which is the safe direction.
 # ─────────────────────────────────────────────────────────────────────────────
 
 input_number:
@@ -25,6 +32,29 @@ input_number:
     unit_of_measurement: "ms"
     icon: mdi:timer-outline
     mode: box
+
+timer:
+  garage_door_release:
+    name: "Garage door — opener release"
+    icon: mdi:lock-open-variant
+    duration: "00:01:00"
+
+script:
+  garage_door_open:
+    alias: "Garage door: trigger opener"
+    description: >-
+      Pulses the garage door relay, but only while the release window
+      (timer.garage_door_release) is running — the guard against accidental
+      dashboard taps.
+    icon: mdi:garage-open-variant
+    sequence:
+      - condition: state
+        entity_id: timer.garage_door_release
+        state: active
+      - action: switch.turn_on
+        target:
+          entity_id: switch.pico_relay_02efbe_switch_3
+    mode: single
 
 automation:
   - id: garage_door_pulse

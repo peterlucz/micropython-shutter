@@ -1,0 +1,99 @@
+# Garage dashboard — single column: camera, light, garage door control.
+#
+# The occupancy sensors live only as small badges at the top. The door
+# opener is guarded against accidental taps: the "Release opener" button
+# starts timer.garage_door_release (1 minute, countdown shown in the tile
+# next to it), and only while it runs is the big door button shown — it
+# calls script.garage_door_open, which itself refuses to pulse the relay
+# unless the timer is active (see packages/garage_door.yaml). When the
+# window is closed a dead "Locked" button shows in its place.
+#
+# Built-in cards only. Pushed to HA at /dashboard-garage via push_dashboard.py.
+
+title: Garage
+views:
+  - title: Garage
+    path: garage
+    icon: mdi:garage
+    type: sections
+    max_columns: 1
+    badges:
+      - type: entity
+        entity: switch.garage_switch_1
+      - type: entity
+        entity: binary_sensor.garage_motion_1_occupancy
+      - type: entity
+        entity: binary_sensor.garage_motion_2_occupancy
+      - type: entity
+        entity: binary_sensor.garage_motion_3_occupancy
+      - type: entity
+        entity: binary_sensor.garage_motion_7_occupancy
+    sections:
+      - type: grid
+        cards:
+
+          # ── Camera ─────────────────────────────────────────────────
+          - type: picture-entity
+            entity: camera.garage
+            camera_image: camera.garage
+            camera_view: auto
+            fit_mode: cover
+            show_name: false
+            show_state: false
+            tap_action:
+              action: more-info
+
+          # ── Light ──────────────────────────────────────────────────
+          - type: tile
+            entity: switch.garage_switch_1
+            name: Light
+            color: teal
+            state_content:
+              - state
+              - last_changed
+            features:
+              - type: toggle
+            features_position: inline
+
+          # ── Garage door ────────────────────────────────────────────
+          - type: heading
+            heading: Garage door
+            icon: mdi:garage-variant
+          - type: button
+            name: Release opener (1 min)
+            icon: mdi:lock-open-variant
+            icon_height: 24px
+            grid_options: {columns: 6, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: timer.start
+              target:
+                entity_id: timer.garage_door_release
+          - type: tile
+            entity: timer.garage_door_release
+            name: Release window
+            color: amber
+            grid_options: {columns: 6, rows: 2}
+          - type: button
+            name: Open / close door
+            icon: mdi:garage-open-variant
+            icon_height: 40px
+            grid_options: {columns: 12, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.garage_door_open
+            visibility:
+              - condition: state
+                entity: timer.garage_door_release
+                state: active
+          - type: button
+            name: Locked — press Release first
+            icon: mdi:lock
+            icon_height: 40px
+            grid_options: {columns: 12, rows: 2}
+            tap_action:
+              action: none
+            visibility:
+              - condition: state
+                entity: timer.garage_door_release
+                state_not: active
