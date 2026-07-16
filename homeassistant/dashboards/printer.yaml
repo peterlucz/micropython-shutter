@@ -1,0 +1,82 @@
+# 3D printer dashboard — Prusa Core One+ with the Buddy Cam.
+#
+# Live camera in a picture-glance card with the print-progress sensors
+# underneath the image, then job details as tiles and the job control
+# buttons. The job sensors/buttons are unavailable while the printer is
+# idle — they populate as soon as a print starts.
+#
+# Built-in cards only. Pushed to HA at /printer-3d via push_dashboard.py
+# (HA requires a hyphen in dashboard url paths).
+
+title: 3D printer
+views:
+  - title: 3D printer
+    path: printer
+    icon: mdi:printer-3d
+    type: sections
+    max_columns: 2
+    sections:
+
+      # ── Camera ───────────────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: picture-glance
+            title: Prusa Core One
+            camera_image: camera.prusa_buddy_cam
+            camera_view: live
+            entities:
+              - entity: sensor.prusa_core_one
+              - entity: sensor.prusa_core_one_progress
+              - entity: sensor.prusa_core_one_print_finish
+              - entity: sensor.prusa_core_one_material
+            grid_options: {columns: full}
+
+      # ── Print job ────────────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: heading
+            heading: Print job
+            icon: mdi:file-document-outline
+          - type: tile
+            entity: sensor.prusa_core_one
+            name: State
+            grid_options: {columns: 6, rows: 1}
+          - type: tile
+            entity: sensor.prusa_core_one_progress
+            grid_options: {columns: 6, rows: 1}
+          - type: tile
+            entity: sensor.prusa_core_one_filename
+            grid_options: {columns: 12, rows: 1}
+          - type: tile
+            entity: sensor.prusa_core_one_print_start
+            grid_options: {columns: 6, rows: 1}
+          - type: tile
+            entity: sensor.prusa_core_one_print_finish
+            grid_options: {columns: 6, rows: 1}
+          - type: tile
+            entity: sensor.prusa_core_one_material
+            grid_options: {columns: 6, rows: 1}
+          - type: tile
+            entity: sensor.prusa_core_one_print_speed
+            grid_options: {columns: 6, rows: 1}
+          - type: button
+            entity: button.prusa_core_one_pause_job
+            name: Pause
+            icon: mdi:pause
+            grid_options: {columns: 4, rows: 1}
+          - type: button
+            entity: button.prusa_core_one_resume_job
+            name: Resume
+            icon: mdi:play
+            grid_options: {columns: 4, rows: 1}
+          - type: button
+            entity: button.prusa_core_one_cancel_job
+            name: Cancel
+            icon: mdi:stop
+            grid_options: {columns: 4, rows: 1}
+            tap_action:
+              action: perform-action
+              perform_action: button.press
+              target: {entity_id: button.prusa_core_one_cancel_job}
+              confirmation:
+                text: Cancel the running print job?
