@@ -1,9 +1,9 @@
 # 3D printer dashboard — Prusa Core One+ with the Buddy Cam.
 #
-# Live camera in a picture-glance card with the print-progress sensors
-# underneath the image, then job details as tiles and the job control
-# buttons. The job sensors/buttons are unavailable while the printer is
-# idle — they populate as soon as a print starts.
+# Single column: live camera in a picture-glance card with the
+# print-progress sensors underneath the image, then job details as tiles
+# and the job control buttons. The job sensors/buttons are unavailable
+# while the printer is idle — they populate as soon as a print starts.
 #
 # Built-in cards only. Pushed to HA at /printer-3d via push_dashboard.py
 # (HA requires a hyphen in dashboard url paths).
@@ -14,7 +14,7 @@ views:
     path: printer
     icon: mdi:printer-3d
     type: sections
-    max_columns: 2
+    max_columns: 1
     sections:
 
       # ── Camera ───────────────────────────────────────────────────
