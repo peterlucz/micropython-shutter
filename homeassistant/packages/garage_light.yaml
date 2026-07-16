@@ -1,0 +1,133 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Garage light: motion / door / manual-override behaviour
+#
+# Deploy:  python3 deploy_ha.py packages/garage_light.yaml
+#
+# switch.garage_switch_1 is the garage ceiling light. Normal behaviour:
+#   * ON  when the motion group trips, or the garage door contact is open 5 s
+#   * OFF when the motion group has been clear for 2 minutes
+#
+# Manual override: turning the switch on by hand (wall switch or dashboard —
+# anything without an automation behind it) starts timer.garage_light_manual
+# for garage_light_manual_minutes. While the timer runs, the motion-clear
+# turn-off is suppressed. Turning the switch off by hand cancels the timer.
+# When the timer finishes: motion clear -> light off; motion still active ->
+# leave it on and let the next motion-clear trigger turn it off normally.
+#
+# "By hand" is detected as a state change whose context has no parent_id,
+# i.e. not caused by an automation or script (this one included).
+# ─────────────────────────────────────────────────────────────────────────────
+
+input_number:
+  garage_light_manual_minutes:
+    name: "Garage light — manual on time"    # live: 30
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: "min"
+    icon: mdi:timer-outline
+    mode: box
+
+timer:
+  garage_light_manual:
+    name: "Garage light — manual override"
+    icon: mdi:lightbulb-on-outline
+    restore: true
+
+automation:
+  - id: "1784147798355"
+    alias: "Switch:Garage:Light"
+    description: >-
+      Motion or an open garage door turns the light on; two minutes without
+      motion turns it off. A manual turn-on holds the light for
+      garage_light_manual_minutes regardless of motion; a manual turn-off
+      cancels the hold.
+    triggers:
+      - platform: state
+        entity_id: binary_sensor.garage_motion_sensors
+        from: "off"
+        to: "on"
+        id: motion_on
+      - platform: state
+        entity_id: binary_sensor.garage_door_1_contact
+        from: "off"
+        to: "on"
+        for: "00:00:05"
+        id: door_open
+      - platform: state
+        entity_id: binary_sensor.garage_motion_sensors
+        from: "on"
+        to: "off"
+        for: "00:02:00"
+        id: motion_clear
+      - platform: state
+        entity_id: switch.garage_switch_1
+        from: "off"
+        to: "on"
+        id: light_on
+      - platform: state
+        entity_id: switch.garage_switch_1
+        from: "on"
+        to: "off"
+        id: light_off
+      - platform: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.garage_light_manual
+        id: manual_hold_over
+    actions:
+      - choose:
+          - alias: "Motion or door open -> light on"
+            conditions:
+              - condition: trigger
+                id: [motion_on, door_open]
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.garage_switch_1
+          - alias: "Motion clear -> light off, unless a manual hold is running"
+            conditions:
+              - condition: trigger
+                id: [motion_clear]
+              - condition: state
+                entity_id: timer.garage_light_manual
+                state: idle
+            sequence:
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.garage_switch_1
+          - alias: "Turned on by hand -> start the manual hold"
+            conditions:
+              - condition: trigger
+                id: [light_on]
+              - condition: template
+                value_template: "{{ trigger.to_state.context.parent_id is none }}"
+            sequence:
+              - action: timer.start
+                target:
+                  entity_id: timer.garage_light_manual
+                data:
+                  duration: "{{ states('input_number.garage_light_manual_minutes')|int(30) * 60 }}"
+          - alias: "Turned off by hand -> cancel the manual hold"
+            conditions:
+              - condition: trigger
+                id: [light_off]
+              - condition: template
+                value_template: "{{ trigger.to_state.context.parent_id is none }}"
+            sequence:
+              - action: timer.cancel
+                target:
+                  entity_id: timer.garage_light_manual
+          - alias: "Manual hold over -> light off only if motion is clear"
+            conditions:
+              - condition: trigger
+                id: [manual_hold_over]
+              - condition: state
+                entity_id: binary_sensor.garage_motion_sensors
+                state: "off"
+            sequence:
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.garage_switch_1
+    mode: queued
+    max: 5
