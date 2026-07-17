@@ -59,6 +59,16 @@ views:
           - type: heading
             heading: Garage door
             icon: mdi:garage-variant
+          # Contact sensor on the door — red while open, shows how long
+          # it has been in the current state.
+          - type: tile
+            entity: binary_sensor.garage_door_1_contact
+            name: Door
+            color: red
+            state_content:
+              - state
+              - last_changed
+            grid_options: {columns: 12, rows: 1}
           - type: button
             name: Release opener (1 min)
             icon: mdi:lock-open-variant
