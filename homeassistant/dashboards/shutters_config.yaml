@@ -1,4 +1,4 @@
-# Shutters monitor dashboard — history charts + tuning knobs for the LIVE
+# Shutter config dashboard — history charts + tuning knobs for the LIVE
 # shutter schedule (the simulated test rig was retired 2026-07-14 after the
 # real covers took over; url_path stays /shutters-test from that era).
 #
@@ -12,10 +12,10 @@
 #
 # Built-in cards only. Pushed to HA at /shutters-test via push_dashboard.py.
 
-title: Shutters monitor
+title: Shutter config
 views:
-  - title: Shutters monitor
-    path: shutter-monitor
+  - title: Shutter config
+    path: shutter-config
     icon: mdi:chart-line
     type: sections
     max_columns: 2

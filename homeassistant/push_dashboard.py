@@ -2,7 +2,7 @@
 """Create/update a Lovelace dashboard in HA from a YAML file via the WebSocket API.
 
 Usage:
-  ./push_dashboard.py dashboards/shutters_test.yaml shutters-test "Shutter test" mdi:window-shutter-cog
+  ./push_dashboard.py dashboards/shutters_config.yaml shutters-test "Shutter config" mdi:window-shutter-cog
 
 Args: <yaml> <url-path> [title] [icon]   (url-path must contain a hyphen)
 """
