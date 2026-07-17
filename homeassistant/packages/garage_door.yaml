@@ -21,6 +21,13 @@
 # the relay while that timer is active. The window stays open for the full
 # minute so a second press can stop/reverse the door. No restore: an HA
 # restart drops the window, which is the safe direction.
+#
+# Physical buttons: a DOUBLE click on garage-button-1 (SONOFF, in the garage)
+# or inside-button-4 (Aqara mini switch) pulses the relay directly — the
+# double click itself is the deliberate gesture, so no release window is
+# involved. Single click is intentionally left unassigned for now (reserved
+# for direct open once the double-click has earned trust). The Zigbee2MQTT
+# buttons expose clicks only as MQTT device triggers, hence the device_ids.
 # ─────────────────────────────────────────────────────────────────────────────
 
 input_number:
@@ -71,3 +78,26 @@ automation:
         target:
           entity_id: switch.pico_relay_02efbe_switch_3
     mode: restart
+
+  - id: garage_door_button_double
+    alias: "Garage door: open on button double-click"
+    description: >-
+      Pulses the garage door relay on a double click of garage-button-1 or
+      inside-button-4. Double click is the confirmation gesture, so this
+      bypasses the dashboard release window.
+    triggers:
+      - platform: device
+        domain: mqtt
+        device_id: 4ac56407309a8b42396556b1cd20199e   # garage-button-1
+        type: action
+        subtype: double
+      - platform: device
+        domain: mqtt
+        device_id: f8fe8d9686f18cad98e30f08d00ffadf   # inside-button-4
+        type: action
+        subtype: double
+    actions:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.pico_relay_02efbe_switch_3
+    mode: single
