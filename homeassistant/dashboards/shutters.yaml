@@ -5,9 +5,9 @@
 # headings inside. Each shutter: a tile with a position slider (color:
 # green) + a Reset button that calls script.shutter_reset (sets the cover
 # to where the group×vent schedule says it should be right now — see
-# packages/shutters_controls.yaml). Rooms with two shutters also get a
-# room-level Reset; the bottom button resets the whole house (with a
-# confirmation prompt).
+# packages/shutters_controls.yaml). The bottom button resets the whole
+# house (with a confirmation prompt). Room-level reset buttons were
+# removed 2026-07-17 — too crowded on a phone.
 #
 # Built-in cards only. Pushed to HA at /shutters-home via push_dashboard.py
 # (HA requires a hyphen in dashboard url paths).
@@ -84,19 +84,6 @@ views:
               perform_action: script.shutter_reset
               data:
                 targets: [cover.pico_relay_02efbc_shutter_1]
-          - type: button
-            name: Reset Hanna szoba
-            icon: mdi:restore
-            icon_height: 20px
-            grid_options: {columns: 12, rows: 1}
-            tap_action:
-              action: perform-action
-              perform_action: script.shutter_reset
-              data:
-                targets:
-                  - cover.pico_relay_02efbc_shutter_1
-                  - cover.pico_relay_02efbe_shutter_2
-
           - type: heading
             heading: Tami szoba
             icon: mdi:bed-empty
@@ -132,18 +119,6 @@ views:
               perform_action: script.shutter_reset
               data:
                 targets: [cover.pico_relay_02efbc_shutter_3]
-          - type: button
-            name: Reset Tami szoba
-            icon: mdi:restore
-            icon_height: 20px
-            grid_options: {columns: 12, rows: 1}
-            tap_action:
-              action: perform-action
-              perform_action: script.shutter_reset
-              data:
-                targets:
-                  - cover.pico_relay_02efbc_shutter_2
-                  - cover.pico_relay_02efbc_shutter_3
 
       # ── Ground floor (right / below) ─────────────────────────────
       - type: grid
@@ -188,19 +163,6 @@ views:
               perform_action: script.shutter_reset
               data:
                 targets: [cover.pico_relay_02efc0_shutter_2]
-          - type: button
-            name: Reset Terasz
-            icon: mdi:restore
-            icon_height: 20px
-            grid_options: {columns: 12, rows: 1}
-            tap_action:
-              action: perform-action
-              perform_action: script.shutter_reset
-              data:
-                targets:
-                  - cover.pico_relay_02efc0_shutter_2
-                  - cover.pico_relay_02efc0_shutter_3
-
           - type: heading
             heading: Konyha
             icon: mdi:countertop
