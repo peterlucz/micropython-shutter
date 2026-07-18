@@ -1,0 +1,80 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Living room Kodi power follows the TV
+#
+# Deploy:  python3 deploy_ha.py packages/livingroom_kodi.yaml
+#
+# The living room Raspberry Pi (LibreELEC, media_player.kodi_nappali) is
+# powered by inside-socket-2. It should be running exactly while the TV
+# (media_player.samsung_q60ba_55_tv_2) is on:
+#
+#   - TV on  -> socket on, LibreELEC boots by itself on power.
+#   - TV off for 1 min -> ask Kodi for a clean OS shutdown first
+#     (kodi.call_method System.Shutdown), wait until its JSON-RPC drops
+#     (Kodi entity -> unavailable/off, max 45 s), give the OS 15 s more to
+#     halt, then cut the socket. The 1-minute hold ignores brief TV
+#     off/on blips.
+#
+# The shutdown call is continue_on_error: if Kodi is already dead the
+# socket still gets switched off. Known edge case (accepted): turning the
+# TV back on during the ~1 min shutdown sequence won't reboot the Pi —
+# the socket-off still completes, and the TV-on trigger has already
+# fired. Toggle the TV off and on again (or the socket from HA) to boot.
+#
+# Same idea as the bedroom pair "Socket:Bedroom:Kodi:On/Off" (UI-managed),
+# but with a graceful shutdown instead of just cutting power.
+# ─────────────────────────────────────────────────────────────────────────────
+
+automation:
+  - id: livingroom_kodi_on
+    alias: "Socket:Livingroom:Kodi:On"
+    description: "Powers the living room Kodi Pi socket when the TV turns on"
+    triggers:
+      - trigger: state
+        entity_id: media_player.samsung_q60ba_55_tv_2
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: switch.inside_socket_2
+        state: "off"
+    actions:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.inside_socket_2
+    mode: single
+
+  - id: livingroom_kodi_off
+    alias: "Socket:Livingroom:Kodi:Off"
+    description: >-
+      Shuts LibreELEC down cleanly and then cuts the living room Kodi
+      socket once the TV has been off for a minute.
+    triggers:
+      - trigger: state
+        entity_id: media_player.samsung_q60ba_55_tv_2
+        to: "off"
+        for: "00:01:00"
+    conditions:
+      - condition: state
+        entity_id: switch.inside_socket_2
+        state: "on"
+    actions:
+      - action: kodi.call_method
+        target:
+          entity_id: media_player.kodi_nappali
+        data:
+          method: System.Shutdown
+        continue_on_error: true
+      - wait_for_trigger:
+          - trigger: state
+            entity_id: media_player.kodi_nappali
+            to: "unavailable"
+          - trigger: state
+            entity_id: media_player.kodi_nappali
+            to: "off"
+        timeout: "00:00:45"
+        continue_on_timeout: true
+      - delay:
+          seconds: 15
+      - action: switch.turn_off
+        target:
+          entity_id: switch.inside_socket_2
+    mode: single
