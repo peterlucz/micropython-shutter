@@ -1,0 +1,57 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# 3D printer power toggle
+#
+# Deploy:  python3 deploy_ha.py packages/printer_power.yaml --scripts
+#
+# One script holds the power logic for the 3D printer corner so every entry
+# point behaves identically. Callers:
+#   - the IKEA remote inside-ikea-1's main toggle (UI-managed automation
+#     "Socket:3D Printer", config id 1768167659291 — its Toggle All branch
+#     just calls this script; brightness up/down = lamp only, kept inline)
+#   - the Power button on the 3D printer dashboard (dashboards/printer.yaml)
+#
+# Behaviour: printer socket off → turn on printer + light sockets. Printer
+# socket on → turn both off, but ONLY if the printer is not mid-job
+# (printing/paused/pausing/busy/attention). sensor.prusa_core_one reads
+# `unavailable` when the socket is on but the printer itself is switched
+# off — that counts as safe to power down.
+# ─────────────────────────────────────────────────────────────────────────────
+
+script:
+  printer_power_toggle:
+    alias: "3D printer: power toggle"
+    description: >-
+      Toggles the 3D printer corner: both sockets on when the printer socket
+      is off; both off otherwise — unless a print job is running, in which
+      case it does nothing.
+    icon: mdi:power
+    sequence:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: switch.printer_socket_2
+                state: "off"
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id:
+                    - switch.printer_socket_2
+                    - switch.printer_socket_1
+          - conditions:
+              - condition: not
+                conditions:
+                  - condition: state
+                    entity_id: sensor.prusa_core_one
+                    state:
+                      - printing
+                      - paused
+                      - pausing
+                      - busy
+                      - attention
+            sequence:
+              - action: switch.turn_off
+                target:
+                  entity_id:
+                    - switch.printer_socket_2
+                    - switch.printer_socket_1
+    mode: single

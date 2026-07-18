@@ -1,9 +1,11 @@
 # 3D printer dashboard — Prusa Core One+ with the Buddy Cam.
 #
-# Single column: live camera in a picture-glance card with the
-# print-progress sensors underneath the image, then job details as tiles
-# and the job control buttons. The job sensors/buttons are unavailable
-# while the printer is idle — they populate as soon as a print starts.
+# Single column: power section first (the only live part while the
+# sockets are off), then the live camera in a picture-glance card with
+# the print-progress sensors underneath the image, then job details as
+# tiles and the job control buttons. The job sensors/buttons are
+# unavailable while the printer is idle — they populate as soon as a
+# print starts.
 #
 # Built-in cards only. Pushed to HA at /printer-3d via push_dashboard.py
 # (HA requires a hyphen in dashboard url paths).
@@ -16,6 +18,43 @@ views:
     type: sections
     max_columns: 1
     sections:
+
+      # ── Power ────────────────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: heading
+            heading: Power
+            icon: mdi:power
+          # Indicators only — tap opens more-info. Switching goes through
+          # the Power button (or the IKEA remote): both run
+          # script.printer_power_toggle, which refuses to cut power
+          # mid-print (packages/printer_power.yaml).
+          - type: tile
+            entity: switch.printer_socket_2
+            name: Printer
+            icon: mdi:printer-3d
+            color: blue
+            state_content:
+              - state
+              - last_changed
+            grid_options: {columns: 6, rows: 1}
+          - type: tile
+            entity: switch.printer_socket_1
+            name: Light
+            icon: mdi:lightbulb
+            color: amber
+            state_content:
+              - state
+              - last_changed
+            grid_options: {columns: 6, rows: 1}
+          - type: button
+            name: Power on / off
+            icon: mdi:power
+            icon_height: 24px
+            grid_options: {columns: 12, rows: 1}
+            tap_action:
+              action: perform-action
+              perform_action: script.printer_power_toggle
 
       # ── Camera ───────────────────────────────────────────────────
       - type: grid
