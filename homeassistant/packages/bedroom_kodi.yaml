@@ -1,0 +1,123 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Bedroom Kodi power (no smart TV — button-driven)
+#
+# Deploy:  python3 deploy_ha.py packages/bedroom_kodi.yaml
+#
+# The bedroom Raspberry Pi (LibreELEC, media_player.libreelec_halo) is
+# powered by inside-socket-3. There is no controllable TV in the bedroom,
+# so a single click on inside-button-1 or inside-button-3 (Aqara Mi
+# wireless switches — z2m exposes clicks only as MQTT device triggers,
+# hence the device_ids) acts as a power toggle:
+#
+#   - socket off                  -> socket on, LibreELEC boots on power
+#   - Kodi running                -> ask it for a clean OS shutdown; the
+#                                    off automation below cuts the socket
+#   - Pi halted but socket still  -> power-cycle the socket to reboot
+#     on (stuck state)               (recovers a missed socket-off)
+#
+# The off automation cuts the socket a minute after the Kodi entity goes
+# off/unavailable — which also happens when Kodi is merely UNREACHABLE
+# (WiFi blip, Kodi crash), so it additionally requires the socket's power
+# meter to confirm the halt: a running Pi draws a steady ~5 W, a halted
+# one well under 1 W (measured 2026-07-11..17), threshold 2 W. Same for
+# the stuck-state button branch. If power stays high the socket is left
+# alone and the trigger simply re-fires on the next off transition.
+#
+# Replaces the UI-managed pair "Socket:Bedroom:Kodi:On/Off" (deleted
+# 2026-07-18), which could cut power to a live Pi and whose buttons only
+# powered on. Living-room sibling: packages/livingroom_kodi.yaml (TV
+# state instead of buttons).
+# ─────────────────────────────────────────────────────────────────────────────
+
+automation:
+  - id: bedroom_kodi_button
+    alias: "Socket:Bedroom:Kodi:Button"
+    description: >-
+      Single click on inside-button-1/-3 toggles the bedroom Kodi Pi:
+      boots it, shuts it down cleanly, or power-cycles a halted-but-
+      powered Pi.
+    triggers:
+      - trigger: device
+        domain: mqtt
+        device_id: 0328b55df46324d65ec9f8384401511d   # inside-button-1
+        type: action
+        subtype: single
+      - trigger: device
+        domain: mqtt
+        device_id: 57204cc62f5af1820e24a68540741115   # inside-button-3
+        type: action
+        subtype: single
+    actions:
+      - choose:
+          # socket off -> power up, Pi boots by itself
+          - conditions:
+              - condition: state
+                entity_id: switch.inside_socket_3
+                state: "off"
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.inside_socket_3
+          # Kodi running -> graceful shutdown; socket-off follows via
+          # the automation below
+          - conditions:
+              - condition: not
+                conditions:
+                  - condition: state
+                    entity_id: media_player.libreelec_halo
+                    state:
+                      - "off"
+                      - unavailable
+                      - unknown
+            sequence:
+              - action: kodi.call_method
+                target:
+                  entity_id: media_player.libreelec_halo
+                data:
+                  method: System.Shutdown
+                continue_on_error: true
+          # stuck: socket on, Kodi down, power confirms the halt ->
+          # power-cycle to reboot
+          - conditions:
+              - condition: numeric_state
+                entity_id: sensor.inside_socket_3_power
+                below: 2
+            sequence:
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.inside_socket_3
+              - delay:
+                  seconds: 5
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.inside_socket_3
+      # remaining case (socket on, Kodi unreachable, power still high —
+      # a live but disconnected Pi): deliberately do nothing
+    mode: single
+
+  - id: bedroom_kodi_off
+    alias: "Socket:Bedroom:Kodi:Off"
+    description: >-
+      Cuts the bedroom Kodi socket a minute after Kodi goes down, but
+      only once the power meter confirms the Pi has actually halted.
+    triggers:
+      - trigger: state
+        entity_id: media_player.libreelec_halo
+        to: "off"
+        for: "00:01:00"
+      - trigger: state
+        entity_id: media_player.libreelec_halo
+        to: unavailable
+        for: "00:01:00"
+    conditions:
+      - condition: state
+        entity_id: switch.inside_socket_3
+        state: "on"
+      - condition: numeric_state
+        entity_id: sensor.inside_socket_3_power
+        below: 2
+    actions:
+      - action: switch.turn_off
+        target:
+          entity_id: switch.inside_socket_3
+    mode: single
