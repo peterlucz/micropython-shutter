@@ -2,3 +2,4 @@ micropython/shutter/secrets.py
 homeassistant/token
 __pycache__/
 micropython/shutter/devices.json.pico_relay_*
+ops-agent/webhook_url

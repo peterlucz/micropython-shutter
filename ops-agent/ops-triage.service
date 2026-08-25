@@ -1,0 +1,10 @@
+[Unit]
+Description=Ops-agent triage run (Proxmox host + Immich VM102)
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=opsagent
+WorkingDirectory=/home/opsagent/ops-agent
+ExecStart=/usr/bin/python3 /home/opsagent/ops-agent/run_all.py
