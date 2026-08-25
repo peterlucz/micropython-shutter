@@ -19,18 +19,23 @@ def main():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     print(f"[{now}] ops-triage run starting")
 
+    proxmox_text, backup_floor = fetch_proxmox_log.fetch()
     immich_text, container_floor = fetch_immich_log.fetch()
-    report = fetch_proxmox_log.fetch() + "\n" + immich_text
+    report = proxmox_text + "\n" + immich_text
     llm_severity, summary = triage.triage(report)
 
-    # Take the more severe of the LLM's read and the deterministic container-
-    # status floor -- a stopped container shouldn't depend on the 3B model's
-    # judgment call to get flagged.
-    severity = max(llm_severity, container_floor, key=SEVERITY_ORDER.index)
+    # Take the most severe of the LLM's read and the deterministic floors --
+    # a stopped container or a failed backup job shouldn't depend on the 3B
+    # model's judgment call to get flagged.
+    hard_floor = max(container_floor, backup_floor, key=SEVERITY_ORDER.index)
+    severity = max(llm_severity, hard_floor, key=SEVERITY_ORDER.index)
     if severity != llm_severity:
-        summary = f"{summary} [container-status floor: {severity}]"
+        summary = f"{summary} [hard floor: {severity} (container={container_floor}, backup={backup_floor})]"
 
-    print(f"[{now}] severity={severity} (llm={llm_severity}, container_floor={container_floor}) summary={summary}")
+    print(
+        f"[{now}] severity={severity} (llm={llm_severity}, container_floor={container_floor}, "
+        f"backup_floor={backup_floor}) summary={summary}"
+    )
 
     if severity in ALERT_LEVELS:
         title = "Ops-agent: CRITICAL" if severity == "critical" else "Ops-agent"

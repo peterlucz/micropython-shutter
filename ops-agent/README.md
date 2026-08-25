@@ -21,17 +21,35 @@ VM101's existing key. An `ssh proxmox` config alias points at the host.
 VM102 (Immich) has no direct SSH access set up, so its logs are fetched via
 `ssh proxmox` -> `qm guest exec 102 -- ...` rather than a direct SSH hop.
 
+## Open WebUI (general chat)
+
+The same LXC also runs [Open WebUI](https://github.com/open-webui/open-webui)
+(Docker, `--network host` so it can reach Ollama at `127.0.0.1:11434` without
+any port-mapping/DNS tricks) as a general chat frontend to `llama3.2:3b` --
+unrelated to the triage pipeline, just reusing the same local model. Browse
+to `http://192.168.1.59:8080` from any device on the LAN; first visit creates
+the admin account (`WEBUI_AUTH=true`, since it's reachable from the whole
+LAN, not just localhost). Chat history persists in the `open-webui` Docker
+volume; the container is `--restart always` so it survives LXC reboots.
+
+Setup is in `setup-openwebui.sh` (installs Docker via the official
+convenience script, needs `nesting=1,keyctl=1` LXC features -- already
+enabled -- for Docker to work inside an unprivileged container). Same
+CPU-only/host-contention caveat as the triage pipeline applies to chat
+response latency; see below.
+
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `fetch_proxmox_log.py` | journal warnings, `zpool status -x`, recent failed/warned PVE tasks |
+| `fetch_proxmox_log.py` | journal warnings, `zpool status -x`, recent failed/warned PVE tasks, last vzdump backup job status (hard floor: any non-`OK` status forces `critical`) |
 | `fetch_immich_log.py` | Immich container status/logs + disk usage (VM root disk *and* the NFS-mounted `/mnt/photo` library — those are separate filesystems, see note below) |
 | `triage.py` | sends the fetched report to Ollama, parses a `SEVERITY: .. / SUMMARY: ..` verdict |
 | `notify.py` | POSTs to the shared HA webhook — only called when severity is `warn` or `critical` |
 | `run_all.py` | fetch -> triage -> notify, the systemd timer's entry point |
 | `ops-triage.service` / `ops-triage.timer` | oneshot + timer, runs every 20 min |
 | `deploy.sh` | pushes everything into LXC 103 and (re)installs the systemd units |
+| `setup-openwebui.sh` | one-time Docker + Open WebUI setup, see below |
 | `webhook_url` | **gitignored** — contains the HA webhook URL, see below |
 
 Note on Immich disk usage: VM102's own disk is only 64 GB, but the actual
@@ -40,6 +58,20 @@ photo library lives on the NAS and is NFS-mounted at `/mnt/photo` (11 TB,
 local disk (24% used). An earlier assumption that the 64 GB VM disk was
 close to the library size was wrong; both mounts are checked separately so
 triage isn't misled by either one.
+
+## Backup job monitoring
+
+PVE's native daily vzdump backup notification used to page every day, success
+or not (PVE's own `default-matcher` routed *all* severities to the webhook).
+Fixed by excluding `type=vzdump` from that matcher (`pvesh set
+/cluster/notifications/matchers/default-matcher --match-field
+'exact:type=vzdump' --invert-match 1`) — vzdump notifications now go nowhere
+natively. Instead, `fetch_proxmox_log.py` checks the last vzdump task's
+status itself each cycle (`pvesh get /nodes/pve/tasks --typefilter vzdump
+--limit 1`) and applies a hard floor (`critical` if status != `OK`), so a
+failed backup gets caught by the same triage pipeline as everything else
+instead of a separate always-on native alert. Trade-off: up to ~20 min
+delay vs. the instant native alert PVE would otherwise send on failure.
 
 ## Notifications
 

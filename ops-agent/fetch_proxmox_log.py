@@ -34,21 +34,47 @@ def _recent_failed_tasks():
     return "\n".join(f"{t.get('type')} (id {t.get('id')}): {t.get('status')}" for t in recent)
 
 
+def _last_backup_status():
+    # PVE's native vzdump->webhook notification is deliberately excluded at the
+    # matcher level (type=vzdump) -- this is now the only place backup job
+    # health is checked. A failed backup is objectively worth flagging, so it
+    # gets a hard floor rather than depending on the LLM to notice it.
+    raw = _ssh("pvesh get /nodes/pve/tasks --typefilter vzdump --limit 1 --output-format json")
+    try:
+        tasks = json.loads(raw)
+    except json.JSONDecodeError:
+        return "(could not check last backup job status)", "warn"
+    if not tasks:
+        return "(no backup job history found)", "warn"
+    task = tasks[0]
+    status = task.get("status", "unknown")
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(task.get("starttime", 0)))
+    text = f"Last vzdump backup job ({when}): status = {status}"
+    floor = "none" if status == "OK" else "critical"
+    return text, floor
+
+
 def fetch():
     journal = _ssh('journalctl -p warning --since "-30 min" --no-pager')
     zpool = _ssh("zpool status -x")
     tasks = _recent_failed_tasks()
+    backup_text, backup_floor = _last_backup_status()
 
-    return (
+    text = (
         "=== Proxmox host: journal warnings (last 30 min) ===\n"
         f"{journal}\n\n"
         "=== Proxmox host: zpool status ===\n"
         f"{zpool}\n\n"
         "=== Proxmox host: failed/warned tasks in the last 30 min ===\n"
-        f"{tasks}\n"
+        f"{tasks}\n\n"
+        "=== Proxmox host: last backup job ===\n"
+        f"{backup_text}\n"
     )
+    return text, backup_floor
 
 
 if __name__ == "__main__":
-    print(fetch())
+    report_text, floor = fetch()
+    print(report_text)
+    print(f"\n(backup status floor: {floor})")
     sys.exit(0)
