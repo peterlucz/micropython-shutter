@@ -27,18 +27,49 @@ VM102 (Immich) has no direct SSH access set up, so its logs are fetched via
 
 The same LXC also runs [Open WebUI](https://github.com/open-webui/open-webui)
 (Docker, `--network host` so it can reach Ollama at `127.0.0.1:11434` without
-any port-mapping/DNS tricks) as a general chat frontend to `llama3.2:3b` --
-unrelated to the triage pipeline, just reusing the same local model. Browse
-to `http://192.168.1.59:8080` from any device on the LAN; first visit creates
+any port-mapping/DNS tricks) as a general chat frontend -- unrelated to the
+triage pipeline, just reusing the same local models. Browse to
+`http://192.168.1.59:8080` from any device on the LAN; first visit creates
 the admin account (`WEBUI_AUTH=true`, since it's reachable from the whole
 LAN, not just localhost). Chat history persists in the `open-webui` Docker
 volume; the container is `--restart always` so it survives LXC reboots.
+
+Local models available: `llama3.2:3b` (best quality/reliability of the
+three, current default recommendation), `qwen2.5:0.5b` and `qwen2.5:1.5b`
+(pulled 2026-08-25 to compare against Llama -- under host contention all
+three land at a similar ~0.5 tok/s, since the bottleneck right now is
+host-wide CPU scheduling, not model size; Qwen's real advantage would show
+up on a quieter host, but its answer quality/reliability is noticeably
+worse than Llama's at the 0.5B size).
 
 Setup is in `setup-openwebui.sh` (installs Docker via the official
 convenience script, needs `nesting=1,keyctl=1` LXC features -- already
 enabled -- for Docker to work inside an unprivileged container). Same
 CPU-only/host-contention caveat as the triage pipeline applies to chat
 response latency; see below.
+
+### Cloud model connections (OpenAI/ChatGPT, optionally Anthropic/Claude)
+
+Open WebUI supports adding OpenAI and Anthropic as extra model backends
+alongside the local Ollama ones -- confirmed both have native handlers in
+this build (`utils/anthropic.py`, `routers/openai.py`). Set via the
+`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` env var on the container (added
+2026-08-25 for OpenAI). Note this is a different product from a ChatGPT
+subscription -- it's OpenAI's pay-as-you-go API (`platform.openai.com`,
+separate billing/API key from `chat.openai.com`), so every message costs
+real (small) money and isn't private/local like the Ollama models.
+
+**Gotcha**: Open WebUI persists connection config (enabled state, API keys)
+to its own SQLite database (`/app/backend/data/webui.db`, `config` table,
+JSON-encoded values) on first boot. The `OPENAI_API_KEY` env var only seeds
+that config the *first* time the container starts with no existing config
+-- adding or changing the key on an already-initialized instance via env
+var alone does nothing, because the persisted DB value wins. Fix: update
+it directly (`UPDATE config SET value = '["<key>"]' WHERE key =
+'openai.api_keys'`, via `docker exec open-webui python3 -c "..."` reading
+the key from the container's own env so it's not re-typed anywhere) then
+`docker restart open-webui`. Same gotcha will apply if adding the Anthropic
+key later, or changing the OpenAI key again.
 
 ## Files
 
