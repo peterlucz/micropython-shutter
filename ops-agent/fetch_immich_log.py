@@ -7,12 +7,36 @@ SSH access set up.
 Usage: ./fetch_immich_log.py
 """
 import json
+import re
 import shlex
 import subprocess
 
 SSH_HOST = "proxmox"
 VMID = "102"
 CONTAINERS = ["immich_server", "immich_postgres", "immich_machine_learning", "immich_redis"]
+
+
+def _summarize_redis_log(raw_log: str) -> str:
+    # Redis forks a new child process (new PID) for every periodic RDB
+    # snapshot -- normal, healthy, happens every ~5 min under any write
+    # load. Observed in practice: the 3B model misread this repetitive-looking
+    # pattern as "high write load" / "repeated restarts", a false positive.
+    # Collapse it to a one-line summary when every cycle actually succeeded,
+    # so there's nothing repetitive left to misjudge; only pass raw lines
+    # through when a cycle didn't complete normally.
+    if raw_log.startswith("(") or raw_log == "(no output)":
+        return raw_log
+    starts = len(re.findall(r"Background saving started", raw_log))
+    successes = len(re.findall(r"Background saving terminated with success", raw_log))
+    anomalies = [
+        line for line in raw_log.splitlines()
+        if re.search(r"error|fail|abort|warn", line, re.IGNORECASE)
+    ]
+    if starts > 0 and starts == successes and not anomalies:
+        return f"{starts} routine background-save cycles in the last 30 min, all completed successfully (normal periodic snapshotting, not restarts)."
+    if anomalies:
+        return "Anomalies found in redis log:\n" + "\n".join(anomalies[-10:])
+    return raw_log
 
 
 def _guest_exec(*args):
@@ -61,6 +85,8 @@ def fetch():
     logs = []
     for name in CONTAINERS:
         out = _guest_exec("docker", "logs", "--since", "30m", "--tail", "50", name)
+        if name == "immich_redis":
+            out = _summarize_redis_log(out)
         logs.append(f"--- {name} ---\n{out}")
 
     text = (
