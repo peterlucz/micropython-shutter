@@ -76,7 +76,7 @@ key later, or changing the OpenAI key again.
 | File | Purpose |
 |------|---------|
 | `fetch_proxmox_log.py` | journal warnings, `zpool status -x`, recent failed/warned PVE tasks, last vzdump backup job status (hard floor: any non-`OK` status forces `critical`) |
-| `fetch_immich_log.py` | Immich container status/logs + disk usage (VM root disk *and* the NFS-mounted `/mnt/photo` library — those are separate filesystems, see note below) |
+| `fetch_immich_log.py` | Immich container status/logs + disk usage (VM root disk *and* the NFS-mounted `/mnt/photo` library — those are separate filesystems, see note below). Hard floors: any non-`Up` container forces `warn`/`critical`; either disk ≥90% used forces `warn`, ≥95% forces `critical`. Redis's routine background-save log lines are collapsed to a one-line summary (see below) rather than passed raw. |
 | `triage.py` | sends the fetched report to Ollama, parses a `SEVERITY: .. / SUMMARY: ..` verdict |
 | `notify.py` | POSTs to the shared HA webhook — only called when severity is `warn` or `critical` |
 | `run_all.py` | fetch -> triage -> notify, the systemd timer's entry point |
@@ -91,6 +91,18 @@ photo library lives on the NAS and is NFS-mounted at `/mnt/photo` (11 TB,
 local disk (24% used). An earlier assumption that the 64 GB VM disk was
 close to the library size was wrong; both mounts are checked separately so
 triage isn't misled by either one.
+
+**False positives caught in practice (2026-08-25)** -- both fixed the same
+way, moving an objectively-checkable fact out of the model's judgment and
+into code rather than trusting it to read numbers/patterns correctly every
+time: (1) the model flagged Redis's completely normal periodic
+background-save cycles (new PID every ~5 min, by design) as "high write
+load" / "repeated restarts" on a container that had been healthy for 2
+weeks straight -- fixed by collapsing that log to a one-line summary when
+every cycle actually succeeded. (2) the model flagged `/mnt/photo` at 73%
+used as "nears full disk", despite the prompt's own stated ~90% threshold
+-- fixed by computing the disk-usage floor in code instead of trusting the
+model's reading of the percentage.
 
 ## Backup job monitoring
 

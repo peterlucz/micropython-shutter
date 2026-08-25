@@ -14,6 +14,7 @@ import subprocess
 SSH_HOST = "proxmox"
 VMID = "102"
 CONTAINERS = ["immich_server", "immich_postgres", "immich_machine_learning", "immich_redis"]
+SEVERITY_ORDER = ["none", "info", "warn", "critical"]
 
 
 def _summarize_redis_log(raw_log: str) -> str:
@@ -72,6 +73,30 @@ def container_floor(ps_text: str) -> str:
     return "critical" if len(down) == len(lines) else "warn"
 
 
+def disk_usage_floor(df_text: str) -> str:
+    """Deterministic severity floor from a `df -h` Use% column -- another
+    objective, checkable number the 3B model has been observed to misjudge
+    (flagged 73% used as "nears full disk" despite the prompt's own stated
+    ~90% threshold). Matches that same threshold, just computed in code
+    instead of trusted to the model's arithmetic/reading."""
+    lines = [line for line in df_text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return "none"
+    fields = lines[1].split()
+    pct_field = next((f for f in fields if f.endswith("%")), None)
+    if not pct_field:
+        return "none"
+    try:
+        pct = int(pct_field.rstrip("%"))
+    except ValueError:
+        return "none"
+    if pct >= 95:
+        return "critical"
+    if pct >= 90:
+        return "warn"
+    return "none"
+
+
 def fetch():
     # A literal backslash-t (not an actual tab byte) is what docker's --format
     # itself expands to a tab; shlex.quote above keeps it intact end to end.
@@ -99,10 +124,16 @@ def fetch():
         "=== Immich (VM102): recent container logs (last 30 min) ===\n"
         + "\n\n".join(logs)
     )
-    return text, container_floor(ps)
+    floor = max(
+        container_floor(ps),
+        disk_usage_floor(disk_root),
+        disk_usage_floor(disk_photo),
+        key=SEVERITY_ORDER.index,
+    )
+    return text, floor
 
 
 if __name__ == "__main__":
     report_text, floor = fetch()
     print(report_text)
-    print(f"\n(container status floor: {floor})")
+    print(f"\n(combined container+disk floor: {floor})")
