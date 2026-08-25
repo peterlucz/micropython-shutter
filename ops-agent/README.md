@@ -9,7 +9,9 @@ reads logs and reports.
 ## Where it runs
 
 **LXC 103** ("ops-agent") on the Proxmox host `pve`, Debian 13, DHCP IP
-(currently `192.168.1.59`), 4 cores / 4 GB RAM / 16 GB disk. Ollama
+(currently `192.168.1.59`), 4 cores / 6 GB RAM / 16 GB disk (bumped from
+4 GB after an OOM-kill on Ollama while Docker/Open WebUI + model swapping
+were all active at once). Ollama
 (`llama3.2:3b`, CPU-only) runs there too, listening on `localhost:11434`.
 
 The scripts run as the `opsagent` user inside the LXC. That user has its
