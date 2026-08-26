@@ -18,9 +18,13 @@ enabled at creation (`pct create ... --features nesting=1`).
 
 - **Prometheus** (`:9090`) -- scrapes every target below every 30s, 30-day
   retention.
-- **Grafana** (`:3000`) -- dashboards. Default login `admin` / `changeme`
-  (env var `GF_SECURITY_ADMIN_PASSWORD` in docker-compose.yml) -- **change
-  this**, it's reachable on the LAN.
+- **Grafana** (`:3000`) -- dashboards. `GF_SECURITY_ADMIN_PASSWORD` in
+  docker-compose.yml only seeds the `admin` account on first boot; Grafana
+  then stores whatever password is actually set in its own database
+  (`grafana_data` volume), so changing it in the UI persists across
+  restarts/redeploys. Password has been changed from the initial value --
+  the env var in the committed file is now stale/first-boot-only, not the
+  current password.
 - **Alertmanager** (`:9093`) -- wired into Prometheus but currently routes
   everything to a `null` receiver (no-op). Alerting rules exist
   (`alert_rules.yml`) and fire in Prometheus/Alertmanager's UI, but nothing
@@ -75,5 +79,5 @@ up.
 - Alertmanager doesn't notify anywhere yet (see above).
 - VM100 (HAOS) has no host-level metrics (see above) -- architectural
   limitation of the appliance, not a gap to fix with more effort.
-- Grafana's admin password is still the default set at creation
-  (`changeme`) -- change it.
+- ~~Grafana's admin password is still the default set at creation~~ --
+  changed 2026-08-26.

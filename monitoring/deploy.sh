@@ -35,5 +35,5 @@ ssh proxmox "rm -rf $STAGE"
 
 echo "deployed."
 echo "Prometheus:   http://192.168.1.12:9090"
-echo "Grafana:      http://192.168.1.12:3000  (admin / changeme -- change this)"
+echo "Grafana:      http://192.168.1.12:3000"
 echo "Alertmanager: http://192.168.1.12:9093"
