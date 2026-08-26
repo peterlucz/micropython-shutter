@@ -202,6 +202,37 @@ Cost is negligible -- this only fires on candidate alerts (rare), never on
 the routine 20-min cycle, and `gpt-4o-mini` is priced in fractions of a
 cent per call.
 
+## Alert history & trend context (added 2026-08-26)
+
+Every `run_all.py` run -- not just ones that notify -- appends one line to
+`alert_log.jsonl` (`{time, severity, llm_severity, cloud_verdict, notified,
+summary, floors}`). This solves two things:
+
+- **No more copy-pasting phone notifications back into a chat session** --
+  the full history (including runs that were suppressed as repeats, or
+  denied by the cloud model) is on disk and can just be read directly:
+  `ssh proxmox "pct exec 103 -- su - opsagent -c 'cd ops-agent && ./alert_log.py --hours 24'"`
+- **Both LLMs in the pipeline get trend context, not just a snapshot.**
+  `alert_log.recent_history_text(hours=24)` builds a compact digest grouped
+  by the same floor-combination the repeat-notification throttle uses (e.g.
+  `"Immich (VM102) photo library disk usage 73%" -- seen 3x (first 13:12,
+  last 13:54), notified 1x`), and this digest is now included in both
+  `triage.py`'s prompt (the local model) and `verify_with_cloud.py`'s prompt
+  (the cloud second-opinion) -- so a chronic, already-confirmed issue reads
+  as "still real, not new" rather than a fresh emergency each cycle, and the
+  cloud model is told to stay consistent with its own past verdicts on the
+  same recurring claim.
+
+Same known limitation as the repeat-notification throttle: narrative-only
+alerts (all floors `none`) are grouped by floor-combination, not by parsed
+issue content, so two unrelated narrative issues occurring back-to-back
+would share one group in the digest. Not fixed for the same reason (cost/
+complexity vs. how often it'd actually bite) -- revisit if it causes a real
+miss.
+
+`alert_log.jsonl` is gitignored (grows indefinitely; local operational data,
+not something to commit) and deployed alongside the other `.py` files.
+
 ## Backup job monitoring
 
 PVE's native daily vzdump backup notification used to page every day, success

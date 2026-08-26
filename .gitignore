@@ -5,4 +5,5 @@ micropython/shutter/devices.json.pico_relay_*
 ops-agent/webhook_url
 ops-agent/state.json
 ops-agent/metrics_history.json
+ops-agent/alert_log.jsonl
 ops-agent/openai_api_key

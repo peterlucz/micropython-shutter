@@ -17,13 +17,17 @@ PROMPT_TEMPLATE = """Log excerpts from a homelab Proxmox server and its Immich (
 
 {report}
 
+{history}
+
 ---
 Do NOT describe, narrate, or summarize the log contents above. Your only job is to decide: \
 does anything above need a human's attention right now? Most of the time nothing does -- \
 routine reboots, healthy containers, application startup/init noise, and normal disk usage \
 are NOT worth flagging. Only escalate for things that are actually broken, failing, or \
 trending toward a real problem (e.g. a container crash-looping, a disk pool degraded, a \
-filesystem above ~90% full, repeated task failures).
+filesystem above ~90% full, repeated task failures). Use the recent activity history above \
+only as context (e.g. a thing already reported many times isn't a fresh emergency) -- keep \
+judging today's data on its own merits.
 
 Reply with ONLY these two lines, nothing else -- no explanation, no restating the logs:
 SEVERITY: <none|info|warn|critical>
@@ -31,8 +35,8 @@ SUMMARY: <one short sentence, plain language>
 """
 
 
-def triage(report: str):
-    prompt = PROMPT_TEMPLATE.format(report=report)
+def triage(report: str, history: str = ""):
+    prompt = PROMPT_TEMPLATE.format(report=report, history=history)
     # num_predict caps generation length -- without it, the model can ramble past
     # its own stop token (observed: 0.47 tok/s under host contention with no end
     # in sight, climbing toward the 4096-token context limit, i.e. hours) instead

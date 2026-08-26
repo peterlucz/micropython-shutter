@@ -12,6 +12,7 @@ import re
 import sys
 import time
 
+import alert_log
 import fetch_proxmox_log
 import fetch_immich_log
 import fetch_self_log
@@ -77,7 +78,8 @@ def main():
     self_text, self_floor, self_reason = fetch_self_log.fetch()
 
     report = "\n".join((host_text, immich_text, vm100_text, vm101_text, self_text))
-    llm_severity, llm_summary = triage.triage(report)
+    history_text = alert_log.recent_history_text(hours=24)
+    llm_severity, llm_summary = triage.triage(report, history_text)
 
     hard_floor = max(
         host_floor, immich_floor, vm100_floor, vm101_floor, self_floor,
@@ -102,6 +104,7 @@ def main():
         f"vm100={vm100_floor}, vm101={vm101_floor}, self={self_floor}) summary={summary}"
     )
 
+    cloud_verdict = ""
     if severity in ALERT_LEVELS and not floor_driven:
         # Floor-driven alerts are already deterministic (container down, backup
         # failed, disk genuinely over threshold) -- no need to spend an API
@@ -111,8 +114,9 @@ def main():
         # a second opinion from a more capable cloud model before paging the
         # phone; only proceed if it agrees this is real.
         try:
-            confirmed, cloud_summary = verify_with_cloud.verify(report, severity, summary)
-            print(f"[{now}] cloud verification: {'confirmed' if confirmed else 'denied'} - {cloud_summary}")
+            confirmed, cloud_summary = verify_with_cloud.verify(report, severity, summary, history_text)
+            cloud_verdict = "confirmed" if confirmed else "denied"
+            print(f"[{now}] cloud verification: {cloud_verdict} - {cloud_summary}")
             if confirmed:
                 summary = cloud_summary
             else:
@@ -121,6 +125,7 @@ def main():
         except Exception as e:
             print(f"[{now}] cloud verification failed ({e}), proceeding with local read")
 
+    notified = False
     if severity in ALERT_LEVELS:
         condition_key = (
             f"severity={severity}|host={host_floor}|immich={immich_floor}|"
@@ -129,6 +134,7 @@ def main():
         if _should_notify(condition_key):
             title = "Ops-agent: CRITICAL" if severity == "critical" else "Ops-agent"
             notify.notify(title, summary, severity)
+            notified = True
             print(f"[{now}] notified (severity={severity})")
         else:
             print(f"[{now}] suppressed repeat notification (severity={severity}, already notified recently)")
@@ -138,6 +144,16 @@ def main():
         if STATE_FILE.exists():
             STATE_FILE.unlink()
         print(f"[{now}] no notification (severity={severity})")
+
+    alert_log.record(
+        severity=severity,
+        summary=summary,
+        floors={"host": host_floor, "immich": immich_floor, "vm100": vm100_floor,
+                "vm101": vm101_floor, "self": self_floor},
+        llm_severity=llm_severity,
+        cloud_verdict=cloud_verdict,
+        notified=notified,
+    )
 
 
 if __name__ == "__main__":

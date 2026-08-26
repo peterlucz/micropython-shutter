@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 
 REMOTE_DIR=/home/opsagent/ops-agent
 STAGE=/tmp/ops-agent-deploy
-PY_FILES="host_metrics.py fetch_proxmox_log.py fetch_immich_log.py fetch_vm_log.py fetch_self_log.py triage.py notify.py run_all.py verify_with_cloud.py"
+PY_FILES="host_metrics.py alert_log.py fetch_proxmox_log.py fetch_immich_log.py fetch_vm_log.py fetch_self_log.py triage.py notify.py run_all.py verify_with_cloud.py"
 SECRET_FILES="webhook_url openai_api_key"
 
 ssh proxmox "mkdir -p $STAGE"

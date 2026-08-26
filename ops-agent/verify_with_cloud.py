@@ -30,15 +30,22 @@ exist in the data (e.g. claiming errors when a container's logs were completely 
 misjudging normal disk usage well under any real threshold as critical). Check the raw data \
 yourself rather than trusting the claim.
 
+{history}
+
+If recent history above shows this same issue already confirmed and notified multiple times \
+without resolution, it's still real (a chronic unfixed problem) -- confirm it again rather than \
+denying just because it's not new. If it shows this exact claim already denied before for the \
+same reason, lean toward denying again unless the raw data shows something has changed.
+
 Reply with ONLY these two lines, nothing else:
 VERDICT: <confirm|deny>
 SUMMARY: <if confirm, one clear sentence describing the real issue for a phone notification; if deny, a short reason it's a false positive>
 """
 
 
-def verify(report: str, severity: str, summary: str):
+def verify(report: str, severity: str, summary: str, history: str = ""):
     api_key = API_KEY_FILE.read_text().strip()
-    prompt = PROMPT_TEMPLATE.format(severity=severity, summary=summary, report=report)
+    prompt = PROMPT_TEMPLATE.format(severity=severity, summary=summary, report=report, history=history)
     body = json.dumps({
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
