@@ -6,4 +6,6 @@ ops-agent/webhook_url
 ops-agent/state.json
 ops-agent/metrics_history.json
 ops-agent/alert_log.jsonl
+monitoring/pve_token
+monitoring/pve.yml
 ops-agent/openai_api_key

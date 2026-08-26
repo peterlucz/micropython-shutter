@@ -1,0 +1,5 @@
+default:
+    user: monitoring@pve
+    token_name: prometheus
+    token_value: __PVE_TOKEN__
+    verify_ssl: false

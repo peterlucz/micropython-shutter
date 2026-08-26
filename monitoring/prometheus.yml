@@ -1,0 +1,41 @@
+global:
+  scrape_interval: 30s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - "alert_rules.yml"
+
+scrape_configs:
+  - job_name: "node"
+    static_configs:
+      - targets: ["192.168.1.26:9100"]
+        labels: {alias: "vm101-desktop"}
+      - targets: ["192.168.1.99:9100"]
+        labels: {alias: "vm102-immich"}
+      - targets: ["192.168.1.59:9100"]
+        labels: {alias: "ct103-opsagent"}
+      - targets: ["192.168.1.12:9100"]
+        labels: {alias: "ct104-monitoring"}
+
+  - job_name: "cadvisor"
+    static_configs:
+      - targets: ["192.168.1.99:8080"]
+        labels: {alias: "vm102-immich-containers"}
+
+  - job_name: "pve"
+    static_configs:
+      - targets: ["192.168.1.102"]
+    metrics_path: /pve
+    params:
+      module: [default]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: pve-exporter:9221
