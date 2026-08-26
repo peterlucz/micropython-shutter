@@ -4,6 +4,7 @@
 Entry point for the ops-triage systemd timer. Run manually with: ./run_all.py
 """
 import datetime
+import re
 import sys
 
 import fetch_proxmox_log
@@ -13,6 +14,18 @@ import triage
 
 ALERT_LEVELS = {"warn", "critical"}
 SEVERITY_ORDER = ["none", "info", "warn", "critical"]
+
+# Observed in practice: the 3B model will fabricate a "warn" out of thin air
+# even when a container's log fetch came back completely empty (no evidence
+# of anything at all). Don't let the LLM's own severity read escalate above
+# the deterministic floor unless something in the raw data actually backs it
+# up -- this is a corroboration check, not a rewording of the floor logic.
+ANOMALY_PATTERN = re.compile(
+    r"\b(error|exception|traceback|fail(?:ed|ing)?|critical|panic|corrupt(?:ed)?|denied|"
+    r"refused|crash(?:ed|ing)?|oom|out of memory|segfault|unable to|cannot connect|"
+    r"timed? ?out|unhealthy|unreachable|degraded)\b",
+    re.IGNORECASE,
+)
 
 
 def main():
@@ -28,6 +41,11 @@ def main():
     # a stopped container or a failed backup job shouldn't depend on the 3B
     # model's judgment call to get flagged.
     hard_floor = max(container_floor, backup_floor, key=SEVERITY_ORDER.index)
+
+    if SEVERITY_ORDER.index(llm_severity) > SEVERITY_ORDER.index(hard_floor) and not ANOMALY_PATTERN.search(report):
+        summary = f"(capped: no corroborating evidence in raw data for '{llm_severity}') {summary}"
+        llm_severity = hard_floor
+
     severity = max(llm_severity, hard_floor, key=SEVERITY_ORDER.index)
     if severity != llm_severity:
         summary = f"{summary} [hard floor: {severity} (container={container_floor}, backup={backup_floor})]"

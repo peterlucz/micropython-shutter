@@ -30,7 +30,12 @@ def _recent_failed_tasks():
     cutoff = time.time() - TASK_LOOKBACK_S
     recent = [t for t in tasks if t.get("starttime", 0) >= cutoff]
     if not recent:
-        return "(no failed/warned tasks in the last 30 min)"
+        # Deliberately avoids the words "failed"/"error" etc -- this string
+        # feeds into run_all.py's anomaly-evidence gate, which scans the
+        # whole report for those exact keywords to decide whether to trust
+        # an LLM-elevated severity. A "nothing wrong" message that itself
+        # contains a trigger word defeats the gate's entire purpose.
+        return "(none in the last 30 min)"
     return "\n".join(f"{t.get('type')} (id {t.get('id')}): {t.get('status')}" for t in recent)
 
 
@@ -65,7 +70,7 @@ def fetch():
         f"{journal}\n\n"
         "=== Proxmox host: zpool status ===\n"
         f"{zpool}\n\n"
-        "=== Proxmox host: failed/warned tasks in the last 30 min ===\n"
+        "=== Proxmox host: task issues in the last 30 min ===\n"
         f"{tasks}\n\n"
         "=== Proxmox host: last backup job ===\n"
         f"{backup_text}\n"

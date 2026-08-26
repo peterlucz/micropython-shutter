@@ -104,6 +104,35 @@ used as "nears full disk", despite the prompt's own stated ~90% threshold
 -- fixed by computing the disk-usage floor in code instead of trusting the
 model's reading of the percentage.
 
+**A day-1 monitoring pass (2026-08-26) surfaced a deeper problem**: the
+disk-usage floor fix above only sets a *minimum* -- `severity =
+max(llm_severity, floor)` -- so the model could still independently claim
+`warn` on its own and win, which it did again on the same 73%-used
+`/mnt/photo`. Worse, on a separate cycle it fabricated "immich_server
+encountered errors with asset thumbnail generation" when that container's
+log fetch had come back **completely empty** -- not a misread, an outright
+invention with zero basis in the data it was given.
+
+Fixed with a second layer in `run_all.py`: `ANOMALY_PATTERN`, a regex of
+failure-indicating keywords (error, exception, fail, crash, degraded,
+unhealthy, etc.). If the LLM's severity is *above* the deterministic floor
+and none of those keywords appear anywhere in the raw report text, its
+claim is capped back down to the floor -- the model is no longer trusted to
+escalate severity on its own say-so without something in the actual data to
+point to. Confirmed working: a later cycle tried "immich_redis disk usage
+over 90%" (not even a real metric) and got correctly capped to `none`.
+
+**Gotcha hit while building the gate itself**: the report's own "nothing
+wrong" text has to avoid the same keywords it's being scanned for, or the
+gate is a no-op. The section header `"=== Proxmox host: failed/warned tasks
+..."` and the placeholder `"(no failed/warned tasks in the last 30 min)"`
+both unconditionally contained "failed" -- meaning *every* report ever
+generated had "corroborating evidence" by definition, regardless of actual
+content, and the gate did nothing on its first deploy. Renamed both to
+avoid trigger words (`"task issues"` / `"(none in the last 30 min)"`). Any
+new "everything's fine" message added to a fetch script needs the same
+check against `ANOMALY_PATTERN` in `run_all.py`.
+
 ## Backup job monitoring
 
 PVE's native daily vzdump backup notification used to page every day, success
