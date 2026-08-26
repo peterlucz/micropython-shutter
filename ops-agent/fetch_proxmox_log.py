@@ -9,8 +9,11 @@ import subprocess
 import sys
 import time
 
+import host_metrics
+
 SSH_HOST = "proxmox"
 TASK_LOOKBACK_S = 30 * 60
+SEVERITY_ORDER = host_metrics.SEVERITY_ORDER
 
 
 def _ssh(cmd):
@@ -64,6 +67,8 @@ def fetch():
     zpool = _ssh("zpool status -x")
     tasks = _recent_failed_tasks()
     backup_text, backup_floor = _last_backup_status()
+    disk = _ssh("df -h /")
+    mem = _ssh("free -m")
 
     text = (
         "=== Proxmox host: journal warnings (last 30 min) ===\n"
@@ -73,10 +78,22 @@ def fetch():
         "=== Proxmox host: task issues in the last 30 min ===\n"
         f"{tasks}\n\n"
         "=== Proxmox host: last backup job ===\n"
-        f"{backup_text}\n"
+        f"{backup_text}\n\n"
+        "=== Proxmox host: disk usage (root) ===\n"
+        f"{disk}\n\n"
+        "=== Proxmox host: memory usage ===\n"
+        f"{mem}\n"
     )
-    reason = backup_text if backup_floor != "none" else ""
-    return text, backup_floor, reason
+    # Memory floor deliberately NOT applied to the host: ~90%+ "used" is its
+    # normal baseline here (static VM/LXC RAM reservations + ZFS ARC using
+    # available RAM by design), unlike a guest VM where that would be a real
+    # warning sign. Confirmed in practice -- this fired a "warn" on the very
+    # first run despite nothing being wrong. Disk is still meaningful and
+    # checked normally; only mem_text is withheld from the floor/trend calc.
+    disk_mem_floor, disk_mem_reason = host_metrics.check_disk_mem("host", "Proxmox host", disk)
+    floor = max(backup_floor, disk_mem_floor, key=SEVERITY_ORDER.index)
+    reason = "; ".join(r for r in (backup_text if backup_floor != "none" else "", disk_mem_reason) if r)
+    return text, floor, reason
 
 
 if __name__ == "__main__":

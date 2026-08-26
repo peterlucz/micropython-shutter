@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Fetch Proxmox host + Immich (VM102) signals, triage with the local LLM, notify if warranted.
+"""Fetch health signals from the Proxmox host, VM100 (HAOS), VM101 (desktop),
+Immich (VM102), and this LXC itself; triage with the local LLM; notify if
+warranted.
 
 Entry point for the ops-triage systemd timer. Run manually with: ./run_all.py
 """
@@ -12,6 +14,8 @@ import time
 
 import fetch_proxmox_log
 import fetch_immich_log
+import fetch_self_log
+import fetch_vm_log
 import notify
 import triage
 import verify_with_cloud
@@ -66,13 +70,20 @@ def main():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     print(f"[{now}] ops-triage run starting")
 
-    proxmox_text, backup_floor, backup_reason = fetch_proxmox_log.fetch()
-    immich_text, container_floor, immich_reason = fetch_immich_log.fetch()
-    report = proxmox_text + "\n" + immich_text
+    host_text, host_floor, host_reason = fetch_proxmox_log.fetch()
+    immich_text, immich_floor, immich_reason = fetch_immich_log.fetch()
+    vm100_text, vm100_floor, vm100_reason = fetch_vm_log.fetch("100", "HAOS", "/mnt/data")
+    vm101_text, vm101_floor, vm101_reason = fetch_vm_log.fetch("101", "Desktop")
+    self_text, self_floor, self_reason = fetch_self_log.fetch()
+
+    report = "\n".join((host_text, immich_text, vm100_text, vm101_text, self_text))
     llm_severity, llm_summary = triage.triage(report)
 
-    hard_floor = max(container_floor, backup_floor, key=SEVERITY_ORDER.index)
-    floor_reasons = "; ".join(r for r in (backup_reason, immich_reason) if r)
+    hard_floor = max(
+        host_floor, immich_floor, vm100_floor, vm101_floor, self_floor,
+        key=SEVERITY_ORDER.index,
+    )
+    floor_reasons = "; ".join(r for r in (host_reason, immich_reason, vm100_reason, vm101_reason, self_reason) if r)
 
     if SEVERITY_ORDER.index(llm_severity) > SEVERITY_ORDER.index(hard_floor) and not ANOMALY_PATTERN.search(report):
         llm_summary = f"(capped: no corroborating evidence in raw data for '{llm_severity}') {llm_summary}"
@@ -87,8 +98,8 @@ def main():
     summary = floor_reasons if floor_driven else llm_summary
 
     print(
-        f"[{now}] severity={severity} (llm={llm_severity}, container_floor={container_floor}, "
-        f"backup_floor={backup_floor}) summary={summary}"
+        f"[{now}] severity={severity} (llm={llm_severity}, host={host_floor}, immich={immich_floor}, "
+        f"vm100={vm100_floor}, vm101={vm101_floor}, self={self_floor}) summary={summary}"
     )
 
     if severity in ALERT_LEVELS and not floor_driven:
@@ -111,7 +122,10 @@ def main():
             print(f"[{now}] cloud verification failed ({e}), proceeding with local read")
 
     if severity in ALERT_LEVELS:
-        condition_key = f"severity={severity}|container={container_floor}|backup={backup_floor}"
+        condition_key = (
+            f"severity={severity}|host={host_floor}|immich={immich_floor}|"
+            f"vm100={vm100_floor}|vm101={vm101_floor}|self={self_floor}"
+        )
         if _should_notify(condition_key):
             title = "Ops-agent: CRITICAL" if severity == "critical" else "Ops-agent"
             notify.notify(title, summary, severity)

@@ -1,10 +1,10 @@
-# ops-agent — Proxmox / Immich log triage (Phase 1 of the local AI project)
+# ops-agent — homelab log/health triage (Phase 1 of the local AI project)
 
 A small always-on agent that periodically pulls health signals from the
-Proxmox host and the Immich VM (VM102), has a local LLM triage them, and
-only pushes a phone notification when something is actually wrong.
-Read-only / advisory only — it never touches the host or VM102, it just
-reads logs and reports.
+Proxmox host, VM100 (HAOS), VM101 (desktop), the Immich VM (VM102), and
+itself (CT103), has a local LLM triage them, and only pushes a phone
+notification when something is actually wrong. Read-only / advisory only —
+it never touches any of the monitored machines, it just reads and reports.
 
 ## Where it runs
 
@@ -75,8 +75,11 @@ key later, or changing the OpenAI key again.
 
 | File | Purpose |
 |------|---------|
-| `fetch_proxmox_log.py` | journal warnings, `zpool status -x`, recent failed/warned PVE tasks, last vzdump backup job status (hard floor: any non-`OK` status forces `critical`) |
-| `fetch_immich_log.py` | Immich container status/logs + disk usage (VM root disk *and* the NFS-mounted `/mnt/photo` library — those are separate filesystems, see note below). Hard floors: any non-`Up` container forces `warn`/`critical`; either disk ≥90% used forces `warn`, ≥95% forces `critical`. Redis's routine background-save log lines are collapsed to a one-line summary (see below) rather than passed raw. |
+| `host_metrics.py` | shared disk/RAM floor + trend-detection logic, reused by every fetch script below (see "Standardized monitoring") |
+| `fetch_proxmox_log.py` | journal warnings, `zpool status -x`, recent failed/warned PVE tasks, last vzdump backup job status (hard floor: any non-`OK` status forces `critical`), host disk usage (RAM deliberately excluded, see below) |
+| `fetch_immich_log.py` | Immich container status/logs + disk usage (VM root disk *and* the NFS-mounted `/mnt/photo` library — those are separate filesystems, see note below) + RAM. Hard floors: any non-`Up` container forces `warn`/`critical`; either disk ≥90% used forces `warn`, ≥95% forces `critical`. Redis's routine background-save log lines are collapsed to a one-line summary (see below) rather than passed raw. |
+| `fetch_vm_log.py` | generic disk+RAM check for a VM reachable only via the QEMU guest agent — used for VM100 (HAOS) and VM101 (desktop), one parametrized script rather than near-duplicates |
+| `fetch_self_log.py` | self-check for this LXC: disk, RAM, and whether Ollama/Docker/the timer itself are actually alive |
 | `triage.py` | sends the fetched report to Ollama, parses a `SEVERITY: .. / SUMMARY: ..` verdict |
 | `verify_with_cloud.py` | second opinion from OpenAI `gpt-4o-mini` for narrative (non-floor-driven) candidate alerts, see below |
 | `notify.py` | POSTs to the shared HA webhook — only called when severity is `warn` or `critical` |
@@ -134,6 +137,46 @@ content, and the gate did nothing on its first deploy. Renamed both to
 avoid trigger words (`"task issues"` / `"(none in the last 30 min)"`). Any
 new "everything's fine" message added to a fetch script needs the same
 check against `ANOMALY_PATTERN` in `run_all.py`.
+
+## Standardized monitoring across every machine (added 2026-08-26)
+
+Originally this only checked the Proxmox host and Immich/VM102. Extended to
+cover VM100 (HAOS), VM101 (desktop), and this LXC's own health, using the
+same disk/RAM floor logic everywhere via the shared `host_metrics.py` rather
+than duplicating thresholds per target. VM100/VM101 have no direct SSH set
+up either, so they're reached the same way as Immich: `ssh proxmox` -> `qm
+guest exec <vmid>`. CT103's self-check runs local commands with no SSH hop
+at all, since it's already the box the code runs on.
+
+**Trend detection**, not just a snapshot threshold: each cycle appends a
+disk%/RAM% sample per target to `metrics_history.json` (gitignored,
+runtime-only, ~8h rolling window). If a resource has climbed 15+ percentage
+points over ~2h and is already at/above 60%, that's flagged as its own
+`warn` -- specifically to catch a slow leak *before* it crosses the hard
+90%/95% threshold, which a plain snapshot never would.
+
+**Two false positives caught rolling this out, both fixed before it shipped**:
+1. HAOS (VM100) keeps `/` as a small, deliberately always-100%-full
+   read-only OS partition by design (immutable A/B layout) -- checking it
+   would be a permanent false "critical". Real writable data lives on
+   `/mnt/data` (`fetch_vm_log.fetch()` takes a `disk_path` argument now,
+   defaulting to `/` for a normal VM like VM101).
+2. The Proxmox host's own RAM legitimately runs ~90%+ "used" as its normal
+   baseline (static VM/LXC reservations + ZFS ARC using available RAM by
+   design) -- unlike a guest VM, where that really would mean trouble. It
+   fired a "warn" on the very first run despite nothing being wrong.
+   Deliberately **not** checked for the host specifically (disk still is);
+   every other target keeps the normal 90%/95% floor.
+
+**Known limitation, not yet fixed**: the repeat-notification throttle keys
+on the floor combination (`severity|host|immich|vm100|vm101|self`). That's
+precise for floor-driven alerts, but for a purely narrative one (all floors
+`none`, only the LLM's own reading crossed the anomaly gate + cloud check)
+two *different* real issues occurring back to back would share the same
+key and the second could get incorrectly suppressed as "already notified".
+Not fixed because there's no cheap way to fingerprint "is this the same
+issue" from paraphrased LLM text without another model call; worth
+revisiting only if it actually causes a real miss in practice.
 
 ## Cloud second-opinion for narrative alerts (added 2026-08-26)
 

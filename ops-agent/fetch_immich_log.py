@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""Pull container health, recent logs, and disk usage for Immich (VM102).
+"""Pull container health, recent logs, disk usage, and RAM for Immich (VM102).
 
 Goes LXC -> ssh proxmox -> `qm guest exec 102`, since VM102 has no direct
 SSH access set up.
 
 Usage: ./fetch_immich_log.py
 """
-import json
 import re
-import shlex
-import subprocess
 
-SSH_HOST = "proxmox"
+import host_metrics
+
 VMID = "102"
 CONTAINERS = ["immich_server", "immich_postgres", "immich_machine_learning", "immich_redis"]
-SEVERITY_ORDER = ["none", "info", "warn", "critical"]
+SEVERITY_ORDER = host_metrics.SEVERITY_ORDER
 
 
 def _summarize_redis_log(raw_log: str) -> str:
@@ -40,28 +38,12 @@ def _summarize_redis_log(raw_log: str) -> str:
     return raw_log
 
 
-def _guest_exec(*args):
-    # ssh with multiple trailing argv elements naively space-joins them into one
-    # remote command string with no quoting -- build (and quote) that string
-    # ourselves instead, or arguments containing spaces/backslashes/braces get
-    # mangled by the remote shell before qm/docker ever see them.
-    remote_cmd = f"qm guest exec {VMID} -- " + " ".join(shlex.quote(a) for a in args)
-    result = subprocess.run(["ssh", SSH_HOST, remote_cmd], capture_output=True, text=True, timeout=30)
-    try:
-        parsed = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return f"(guest exec failed: {result.stdout or result.stderr})"
-    if parsed.get("err-data"):
-        return f"(guest exec error, exitcode={parsed.get('exitcode')}: {parsed['err-data'].strip()})"
-    return parsed.get("out-data", "").strip() or "(no output)"
-
-
 def container_floor(ps_text: str) -> str:
     """Deterministic severity floor from container status -- a stopped/crashed
     container is an objective fact, not a judgment call, so don't leave it to
     the 3B model's discretion (it has been observed to notice a container is
     down but still rate it "info"). The LLM still owns the nuanced calls
-    (log content, disk trends, stale task noise)."""
+    (log content, stale task noise)."""
     if ps_text.startswith("("):  # guest exec itself failed
         return "warn"
     lines = [line for line in ps_text.splitlines() if line.strip()]
@@ -84,56 +66,18 @@ def _container_down_reason(ps_text: str) -> str:
     return "; ".join(down)
 
 
-def _disk_reason(df_text: str, label: str) -> str:
-    """Human-readable disk-usage description, only non-empty when the floor
-    for this mount is actually warn/critical."""
-    if disk_usage_floor(df_text) == "none":
-        return ""
-    lines = [line for line in df_text.splitlines() if line.strip()]
-    if len(lines) < 2:
-        return f"{label}: could not read disk usage"
-    fields = lines[1].split()
-    pct = next((f for f in fields if f.endswith("%")), "?")
-    return f"{label} disk usage at {pct}"
-
-
-def disk_usage_floor(df_text: str) -> str:
-    """Deterministic severity floor from a `df -h` Use% column -- another
-    objective, checkable number the 3B model has been observed to misjudge
-    (flagged 73% used as "nears full disk" despite the prompt's own stated
-    ~90% threshold). Matches that same threshold, just computed in code
-    instead of trusted to the model's arithmetic/reading."""
-    lines = [line for line in df_text.splitlines() if line.strip()]
-    if len(lines) < 2:
-        return "none"
-    fields = lines[1].split()
-    pct_field = next((f for f in fields if f.endswith("%")), None)
-    if not pct_field:
-        return "none"
-    try:
-        pct = int(pct_field.rstrip("%"))
-    except ValueError:
-        return "none"
-    if pct >= 95:
-        return "critical"
-    if pct >= 90:
-        return "warn"
-    return "none"
-
-
 def fetch():
-    # A literal backslash-t (not an actual tab byte) is what docker's --format
-    # itself expands to a tab; shlex.quote above keeps it intact end to end.
-    ps = _guest_exec("docker", "ps", "-a", "--format", "{{.Names}}\\t{{.Status}}")
+    ps = host_metrics.guest_exec(VMID, "docker", "ps", "-a", "--format", "{{.Names}}\\t{{.Status}}")
     # / is the VM's own 64G disk (docker images/db); /mnt/photo is the NFS-mounted
     # photo library from the NAS -- that's the one that actually matters for "running
     # out of space for photos".
-    disk_root = _guest_exec("df", "-h", "/")
-    disk_photo = _guest_exec("df", "-h", "/mnt/photo")
+    disk_root = host_metrics.guest_exec(VMID, "df", "-h", "/")
+    disk_photo = host_metrics.guest_exec(VMID, "df", "-h", "/mnt/photo")
+    mem = host_metrics.guest_exec(VMID, "free", "-m")
 
     logs = []
     for name in CONTAINERS:
-        out = _guest_exec("docker", "logs", "--since", "30m", "--tail", "50", name)
+        out = host_metrics.guest_exec(VMID, "docker", "logs", "--since", "30m", "--tail", "50", name)
         if name == "immich_redis":
             out = _summarize_redis_log(out)
         logs.append(f"--- {name} ---\n{out}")
@@ -145,20 +89,23 @@ def fetch():
         f"{disk_root}\n\n"
         "=== Immich (VM102): disk usage (photo library, NFS mount) ===\n"
         f"{disk_photo}\n\n"
+        "=== Immich (VM102): memory usage ===\n"
+        f"{mem}\n\n"
         "=== Immich (VM102): recent container logs (last 30 min) ===\n"
         + "\n\n".join(logs)
     )
+
     c_floor = container_floor(ps)
-    floor = max(
-        c_floor,
-        disk_usage_floor(disk_root),
-        disk_usage_floor(disk_photo),
-        key=SEVERITY_ORDER.index,
-    )
+    root_floor, root_reason = host_metrics.check_disk_mem("vm102_root", "Immich VM root", disk_root, mem)
+    # Photo library only has a disk mount (no separate mem concept), and mem
+    # is already covered by root_floor -- pass no mem_text here to skip it.
+    photo_floor, photo_reason = host_metrics.check_disk_mem("vm102_photo", "Photo library", disk_photo)
+
+    floor = max(c_floor, root_floor, photo_floor, key=SEVERITY_ORDER.index)
     reason = "; ".join(r for r in (
         _container_down_reason(ps) if c_floor != "none" else "",
-        _disk_reason(disk_root, "VM root"),
-        _disk_reason(disk_photo, "Photo library"),
+        root_reason,
+        photo_reason,
     ) if r)
     return text, floor, reason
 
@@ -166,4 +113,4 @@ def fetch():
 if __name__ == "__main__":
     report_text, floor, reason = fetch()
     print(report_text)
-    print(f"\n(combined container+disk floor: {floor}; reason: {reason or '(none)'})")
+    print(f"\n(combined floor: {floor}; reason: {reason or '(none)'})")
