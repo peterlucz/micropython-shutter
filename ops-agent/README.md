@@ -230,8 +230,14 @@ would share one group in the digest. Not fixed for the same reason (cost/
 complexity vs. how often it'd actually bite) -- revisit if it causes a real
 miss.
 
-`alert_log.jsonl` is gitignored (grows indefinitely; local operational data,
-not something to commit) and deployed alongside the other `.py` files.
+`alert_log.jsonl` is gitignored (local operational data, not something to
+commit) and deployed alongside the other `.py` files.
+
+**Retention**: entries older than `RETENTION_DAYS` (45, in `alert_log.py`)
+are pruned automatically on every `record()` call -- no separate logrotate
+or cron job needed. At ~72 runs/day this keeps the file well under 1MB
+indefinitely. Verified by appending a synthetic 50-day-old entry and
+confirming `./alert_log.py --prune` dropped it while keeping recent ones.
 
 ## Backup job monitoring
 

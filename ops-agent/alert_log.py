@@ -16,6 +16,37 @@ import time
 
 LOG_FILE = pathlib.Path(__file__).parent / "alert_log.jsonl"
 
+# Bounds how far back trend context and the on-disk log reach -- old enough
+# to be genuinely useful for spotting slow patterns, short enough that the
+# file never grows unbounded. At ~72 runs/day this caps out well under 1MB.
+RETENTION_DAYS = 45
+
+
+def _prune():
+    """Drop entries older than RETENTION_DAYS. Runs on every record() call
+    rather than via a separate cron/logrotate job -- the file stays small
+    enough (see RETENTION_DAYS above) that a full rewrite each cycle is
+    negligible, and this keeps retention self-contained in one file instead
+    of depending on external logrotate config surviving a redeploy."""
+    if not LOG_FILE.exists():
+        return
+    cutoff = time.time() - RETENTION_DAYS * 86400
+    kept = []
+    dropped = 0
+    for line in LOG_FILE.read_text().splitlines():
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            dropped += 1
+            continue
+        if entry.get("ts", 0) >= cutoff:
+            kept.append(line)
+        else:
+            dropped += 1
+    if dropped:
+        LOG_FILE.write_text("\n".join(kept) + ("\n" if kept else ""))
+    return dropped
+
 
 def record(severity: str, summary: str, floors: dict, llm_severity: str = "",
            cloud_verdict: str = "", notified: bool = False):
@@ -34,6 +65,7 @@ def record(severity: str, summary: str, floors: dict, llm_severity: str = "",
     # append can't corrupt earlier history if a run is killed mid-write.
     with LOG_FILE.open("a") as f:
         f.write(json.dumps(entry) + "\n")
+    _prune()
 
 
 def _load(hours: float):
@@ -97,5 +129,10 @@ def recent_history_text(hours: float = 24) -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--hours", type=float, default=24)
+    parser.add_argument("--prune", action="store_true", help=f"drop entries older than {RETENTION_DAYS} days now, and report how many")
     args = parser.parse_args()
-    print(recent_history_text(args.hours))
+    if args.prune:
+        n = _prune()
+        print(f"pruned {n} entries older than {RETENTION_DAYS} days")
+    else:
+        print(recent_history_text(args.hours))
