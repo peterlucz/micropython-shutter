@@ -8,4 +8,5 @@ ops-agent/metrics_history.json
 ops-agent/alert_log.jsonl
 monitoring/pve_token
 monitoring/pve.yml
+monitoring/webhook_url
 ops-agent/openai_api_key

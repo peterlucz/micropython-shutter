@@ -25,13 +25,12 @@ enabled at creation (`pct create ... --features nesting=1`).
   restarts/redeploys. Password has been changed from the initial value --
   the env var in the committed file is now stale/first-boot-only, not the
   current password.
-- **Alertmanager** (`:9093`) -- wired into Prometheus but currently routes
-  everything to a `null` receiver (no-op). Alerting rules exist
-  (`alert_rules.yml`) and fire in Prometheus/Alertmanager's UI, but nothing
-  pages a phone yet -- that's a deliberate scope cut for this first pass,
-  not an oversight. Natural next step: point the `null` receiver at the
-  same HA webhook `ops-agent/notify.py` already uses, so both pipelines
-  converge on one phone-notification path.
+- **Alertmanager** (`:9093`) -- routes every alert to `alert_bridge.py`
+  (added 2026-08-26), which reshapes it into the same `{"title","message",
+  "severity"}` payload `ops-agent/notify.py` sends and forwards it to the
+  same HA webhook -- Prometheus-driven alerts now land on the same phone
+  notification path as ops-agent's own. `repeat_interval: 4h` in
+  `alertmanager.yml` matches ops-agent's own re-notify interval.
 - **pve-exporter** (`:9221`) -- queries the Proxmox API *remotely* (never
   installed on the bare host, matching this project's "keep the host lean"
   convention) using a dedicated read-only API token.
@@ -56,6 +55,32 @@ enabled at creation (`pct create ... --features nesting=1`).
 - **Proxmox via Prometheus** (ID 10347) -- host-level PVE metrics (CPU,
   memory, per-VM/CT status) from `pve-exporter`.
 
+## Alert bridge (`alert_bridge.py`, added 2026-08-26)
+
+Alertmanager's `webhook_configs` always POSTs its own fixed JSON schema
+(`status`/`alerts`/`labels`/`annotations`) -- it can't be templated into an
+arbitrary shape the way its email/Slack receivers can. `alert_bridge.py` is
+a small stdlib-only HTTP server that receives that payload, reshapes each
+alert into `{"title","message","severity"}`, and forwards it to the same
+HA webhook `ops-agent/notify.py` uses (URL in the gitignored `webhook_url`,
+same convention as `ops-agent`'s secrets).
+
+It runs directly on the CT104 host via systemd (`alert-bridge.service`),
+not as another docker-compose service -- simple enough not to need
+containerizing, and it needs a stable place for its `webhook_url` file
+regardless. Because Alertmanager reaches it from inside docker's bridge
+network, `alertmanager.yml` points at the LXC's real IP
+(`192.168.1.12:9099`), not `localhost` -- same gotcha as the CT104
+self-monitoring node_exporter target.
+
+`deploy.sh` restarts both `prometheus` and `alertmanager` after every push
+(bind-mounted config files, so `docker compose up -d` alone won't reload
+them into an already-running container) and reinstalls/restarts
+`alert-bridge.service`. Verified end-to-end: a synthetic Alertmanager-shaped
+payload POSTed directly to `:9099/alert`, confirmed forwarded with no
+errors in `journalctl -u alert-bridge`, and confirmed Alertmanager's own
+`/api/v2/status` shows the `ha-webhook` receiver loaded correctly.
+
 ## Deploy / redeploy
 
 ```
@@ -63,11 +88,13 @@ enabled at creation (`pct create ... --features nesting=1`).
 ```
 
 Stages `docker-compose.yml`, `prometheus.yml`, `alert_rules.yml`,
-`alertmanager.yml` to the Proxmox host then `pct push`es them into CT104
-(same pattern as `ops-agent/deploy.sh` -- no direct filesystem route from
-the workstation into an LXC). `pve.yml` is generated from
-`pve.yml.template` + the gitignored `pve_token` file rather than committed
-with the real token in it. Then runs `docker compose up -d` inside the LXC.
+`alertmanager.yml`, `alert_bridge.py` to the Proxmox host then
+`pct push`es them into CT104 (same pattern as `ops-agent/deploy.sh` -- no
+direct filesystem route from the workstation into an LXC). `pve.yml` is
+generated from `pve.yml.template` + the gitignored `pve_token` file rather
+than committed with the real token in it; `webhook_url` is gitignored the
+same way. Then runs `docker compose up -d` + restarts prometheus/
+alertmanager, and reinstalls/restarts `alert-bridge.service`.
 
 Node exporter / cAdvisor installs on the actual target VMs are **not**
 part of `deploy.sh` (they're one-time host-level installs, not part of the
@@ -76,8 +103,11 @@ up.
 
 ## Known scope cuts (not bugs, deliberate for this first pass)
 
-- Alertmanager doesn't notify anywhere yet (see above).
 - VM100 (HAOS) has no host-level metrics (see above) -- architectural
   limitation of the appliance, not a gap to fix with more effort.
+- No dedup between ops-agent's own floor-based alerts and Prometheus's
+  alert_rules.yml -- e.g. a genuinely full disk could now page twice
+  (once from each pipeline). Not fixed here; revisit if it's actually
+  annoying in practice rather than guessing at the right merge now.
 - ~~Grafana's admin password is still the default set at creation~~ --
   changed 2026-08-26.

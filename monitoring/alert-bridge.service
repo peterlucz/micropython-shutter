@@ -1,0 +1,13 @@
+[Unit]
+Description=Alertmanager -> HA webhook bridge
+After=network-online.target
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/monitoring/alert_bridge.py
+WorkingDirectory=/opt/monitoring
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

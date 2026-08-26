@@ -1,5 +1,11 @@
 route:
-  receiver: "null"
+  receiver: "ha-webhook"
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
 
 receivers:
-  - name: "null"
+  - name: "ha-webhook"
+    webhook_configs:
+      - url: "http://192.168.1.12:9099/alert"
+        send_resolved: true
