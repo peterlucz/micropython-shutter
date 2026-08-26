@@ -11,7 +11,7 @@ import sys
 import urllib.request
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "llama3.2:3b"
+MODEL = "qwen2.5:1.5b"
 
 PROMPT_TEMPLATE = """Log excerpts from a homelab Proxmox server and its Immich (photo backup) VM:
 
