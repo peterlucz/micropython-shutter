@@ -4,8 +4,11 @@
 Entry point for the ops-triage systemd timer. Run manually with: ./run_all.py
 """
 import datetime
+import json
+import pathlib
 import re
 import sys
+import time
 
 import fetch_proxmox_log
 import fetch_immich_log
@@ -27,28 +30,62 @@ ANOMALY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# A genuinely unresolved problem (e.g. a real backup failure) shouldn't page
+# every single 20-min cycle forever -- re-remind at most this often per
+# distinct condition, tracked in STATE_FILE across runs.
+RENOTIFY_INTERVAL_S = 4 * 60 * 60
+STATE_FILE = pathlib.Path(__file__).parent / "state.json"
+
+
+def _load_state():
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _should_notify(condition_key: str) -> bool:
+    """True if this exact condition hasn't been notified recently. Resets
+    itself (via main()'s cleanup below) as soon as the condition resolves, so
+    a *future* recurrence of the same condition notifies fresh rather than
+    staying throttled forever."""
+    state = _load_state()
+    last = state.get(condition_key)
+    now = time.time()
+    if last is not None and now - last < RENOTIFY_INTERVAL_S:
+        return False
+    state[condition_key] = now
+    STATE_FILE.write_text(json.dumps(state))
+    return True
+
 
 def main():
     now = datetime.datetime.now().isoformat(timespec="seconds")
     print(f"[{now}] ops-triage run starting")
 
-    proxmox_text, backup_floor = fetch_proxmox_log.fetch()
-    immich_text, container_floor = fetch_immich_log.fetch()
+    proxmox_text, backup_floor, backup_reason = fetch_proxmox_log.fetch()
+    immich_text, container_floor, immich_reason = fetch_immich_log.fetch()
     report = proxmox_text + "\n" + immich_text
-    llm_severity, summary = triage.triage(report)
+    llm_severity, llm_summary = triage.triage(report)
 
-    # Take the most severe of the LLM's read and the deterministic floors --
-    # a stopped container or a failed backup job shouldn't depend on the 3B
-    # model's judgment call to get flagged.
     hard_floor = max(container_floor, backup_floor, key=SEVERITY_ORDER.index)
+    floor_reasons = "; ".join(r for r in (backup_reason, immich_reason) if r)
 
     if SEVERITY_ORDER.index(llm_severity) > SEVERITY_ORDER.index(hard_floor) and not ANOMALY_PATTERN.search(report):
-        summary = f"(capped: no corroborating evidence in raw data for '{llm_severity}') {summary}"
+        llm_summary = f"(capped: no corroborating evidence in raw data for '{llm_severity}') {llm_summary}"
         llm_severity = hard_floor
 
     severity = max(llm_severity, hard_floor, key=SEVERITY_ORDER.index)
-    if severity != llm_severity:
-        summary = f"{summary} [hard floor: {severity} (container={container_floor}, backup={backup_floor})]"
+
+    # When a hard floor is at or above the LLM's own read, it's the floor that
+    # actually explains the problem -- use its concrete reason as the message
+    # body instead of the LLM's (possibly irrelevant or fabricated) narrative.
+    if floor_reasons and SEVERITY_ORDER.index(hard_floor) >= SEVERITY_ORDER.index(llm_severity):
+        summary = floor_reasons
+    else:
+        summary = llm_summary
 
     print(
         f"[{now}] severity={severity} (llm={llm_severity}, container_floor={container_floor}, "
@@ -56,10 +93,18 @@ def main():
     )
 
     if severity in ALERT_LEVELS:
-        title = "Ops-agent: CRITICAL" if severity == "critical" else "Ops-agent"
-        notify.notify(title, summary, severity)
-        print(f"[{now}] notified (severity={severity})")
+        condition_key = f"severity={severity}|container={container_floor}|backup={backup_floor}"
+        if _should_notify(condition_key):
+            title = "Ops-agent: CRITICAL" if severity == "critical" else "Ops-agent"
+            notify.notify(title, summary, severity)
+            print(f"[{now}] notified (severity={severity})")
+        else:
+            print(f"[{now}] suppressed repeat notification (severity={severity}, already notified recently)")
     else:
+        # Condition resolved (or never triggered) -- clear any stale state so
+        # a future recurrence isn't throttled by an old timestamp.
+        if STATE_FILE.exists():
+            STATE_FILE.unlink()
         print(f"[{now}] no notification (severity={severity})")
 
 

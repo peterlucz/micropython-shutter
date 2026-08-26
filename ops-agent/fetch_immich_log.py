@@ -73,6 +73,30 @@ def container_floor(ps_text: str) -> str:
     return "critical" if len(down) == len(lines) else "warn"
 
 
+def _container_down_reason(ps_text: str) -> str:
+    """Human-readable description of which container(s) are down, for use in
+    the notification body when container_floor is what's driving severity --
+    the LLM's summary can't be trusted to state this correctly/at all."""
+    if ps_text.startswith("("):
+        return f"container status check failed: {ps_text}"
+    lines = [line for line in ps_text.splitlines() if line.strip()]
+    down = [line.replace("\t", ": ") for line in lines if "\tUp " not in line]
+    return "; ".join(down)
+
+
+def _disk_reason(df_text: str, label: str) -> str:
+    """Human-readable disk-usage description, only non-empty when the floor
+    for this mount is actually warn/critical."""
+    if disk_usage_floor(df_text) == "none":
+        return ""
+    lines = [line for line in df_text.splitlines() if line.strip()]
+    if len(lines) < 2:
+        return f"{label}: could not read disk usage"
+    fields = lines[1].split()
+    pct = next((f for f in fields if f.endswith("%")), "?")
+    return f"{label} disk usage at {pct}"
+
+
 def disk_usage_floor(df_text: str) -> str:
     """Deterministic severity floor from a `df -h` Use% column -- another
     objective, checkable number the 3B model has been observed to misjudge
@@ -124,16 +148,22 @@ def fetch():
         "=== Immich (VM102): recent container logs (last 30 min) ===\n"
         + "\n\n".join(logs)
     )
+    c_floor = container_floor(ps)
     floor = max(
-        container_floor(ps),
+        c_floor,
         disk_usage_floor(disk_root),
         disk_usage_floor(disk_photo),
         key=SEVERITY_ORDER.index,
     )
-    return text, floor
+    reason = "; ".join(r for r in (
+        _container_down_reason(ps) if c_floor != "none" else "",
+        _disk_reason(disk_root, "VM root"),
+        _disk_reason(disk_photo, "Photo library"),
+    ) if r)
+    return text, floor, reason
 
 
 if __name__ == "__main__":
-    report_text, floor = fetch()
+    report_text, floor, reason = fetch()
     print(report_text)
-    print(f"\n(combined container+disk floor: {floor})")
+    print(f"\n(combined container+disk floor: {floor}; reason: {reason or '(none)'})")

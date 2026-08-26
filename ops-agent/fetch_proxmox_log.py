@@ -75,11 +75,12 @@ def fetch():
         "=== Proxmox host: last backup job ===\n"
         f"{backup_text}\n"
     )
-    return text, backup_floor
+    reason = backup_text if backup_floor != "none" else ""
+    return text, backup_floor, reason
 
 
 if __name__ == "__main__":
-    report_text, floor = fetch()
+    report_text, floor, reason = fetch()
     print(report_text)
-    print(f"\n(backup status floor: {floor})")
+    print(f"\n(backup status floor: {floor}; reason: {reason or '(none)'})")
     sys.exit(0)

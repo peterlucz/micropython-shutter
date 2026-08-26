@@ -165,6 +165,30 @@ recreate it locally if you're re-cloning:
 echo "http://192.168.1.5:8123/api/webhook/proxmox_alert_wylku5g6" > webhook_url
 ```
 
+### Notification content + throttling (fixed 2026-08-26, after an alert storm)
+
+A day-1 monitoring pass turned up a real backup failure (see "Backup job
+monitoring" above) that also exposed two design bugs, both now fixed:
+
+1. **Notification content was wrong when a hard floor was driving
+   severity.** The message body always came from the LLM's own summary,
+   even when a floor (container/backup) was the actual reason for the
+   elevated severity -- so every notification described something
+   unrelated (or fabricated) instead of the real problem. Fixed: when a
+   hard floor is at or above the LLM's own severity, the notification body
+   is now built from the floor's own concrete reason text (e.g. `"Last
+   vzdump backup job (...): status = job errors"`), not the LLM's
+   narrative. `fetch_proxmox_log.fetch()` and `fetch_immich_log.fetch()`
+   both now return `(text, floor, reason)` instead of `(text, floor)`.
+2. **No throttling at all.** An unresolved condition re-notified on every
+   single 20-min cycle -- one real backup failure produced ~18 near-
+   identical "CRITICAL" phone pages overnight. Fixed with `state.json`
+   (gitignored, runtime-only) tracking a `severity|container_floor|
+   backup_floor` condition key: the same condition only re-notifies once
+   per `RENOTIFY_INTERVAL_S` (4h), and the state clears itself the moment
+   the condition resolves so a *future* recurrence isn't stuck throttled
+   by an old timestamp.
+
 ## Deploy
 
 ```bash
