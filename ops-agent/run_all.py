@@ -14,6 +14,7 @@ import fetch_proxmox_log
 import fetch_immich_log
 import notify
 import triage
+import verify_with_cloud
 
 ALERT_LEVELS = {"warn", "critical"}
 SEVERITY_ORDER = ["none", "info", "warn", "critical"]
@@ -82,15 +83,32 @@ def main():
     # When a hard floor is at or above the LLM's own read, it's the floor that
     # actually explains the problem -- use its concrete reason as the message
     # body instead of the LLM's (possibly irrelevant or fabricated) narrative.
-    if floor_reasons and SEVERITY_ORDER.index(hard_floor) >= SEVERITY_ORDER.index(llm_severity):
-        summary = floor_reasons
-    else:
-        summary = llm_summary
+    floor_driven = bool(floor_reasons) and SEVERITY_ORDER.index(hard_floor) >= SEVERITY_ORDER.index(llm_severity)
+    summary = floor_reasons if floor_driven else llm_summary
 
     print(
         f"[{now}] severity={severity} (llm={llm_severity}, container_floor={container_floor}, "
         f"backup_floor={backup_floor}) summary={summary}"
     )
+
+    if severity in ALERT_LEVELS and not floor_driven:
+        # Floor-driven alerts are already deterministic (container down, backup
+        # failed, disk genuinely over threshold) -- no need to spend an API
+        # call double-checking those. This branch is specifically the local
+        # 3B model's own narrative judgment, which has repeatedly been
+        # unreliable even after passing the anomaly-evidence gate above. Get
+        # a second opinion from a more capable cloud model before paging the
+        # phone; only proceed if it agrees this is real.
+        try:
+            confirmed, cloud_summary = verify_with_cloud.verify(report, severity, summary)
+            print(f"[{now}] cloud verification: {'confirmed' if confirmed else 'denied'} - {cloud_summary}")
+            if confirmed:
+                summary = cloud_summary
+            else:
+                severity = "none"
+                summary = f"(suppressed: cloud model disagreed) {cloud_summary}"
+        except Exception as e:
+            print(f"[{now}] cloud verification failed ({e}), proceeding with local read")
 
     if severity in ALERT_LEVELS:
         condition_key = f"severity={severity}|container={container_floor}|backup={backup_floor}"

@@ -11,19 +11,22 @@ cd "$(dirname "$0")"
 
 REMOTE_DIR=/home/opsagent/ops-agent
 STAGE=/tmp/ops-agent-deploy
-PY_FILES="fetch_proxmox_log.py fetch_immich_log.py triage.py notify.py run_all.py"
+PY_FILES="fetch_proxmox_log.py fetch_immich_log.py triage.py notify.py run_all.py verify_with_cloud.py"
+SECRET_FILES="webhook_url openai_api_key"
 
 ssh proxmox "mkdir -p $STAGE"
 ssh proxmox "pct exec 103 -- install -d -o opsagent -g opsagent $REMOTE_DIR"
 
-for f in $PY_FILES webhook_url ops-triage.service ops-triage.timer; do
+for f in $PY_FILES $SECRET_FILES ops-triage.service ops-triage.timer; do
   scp -q "$f" "proxmox:$STAGE/$f"
 done
 
-for f in $PY_FILES webhook_url; do
+for f in $PY_FILES $SECRET_FILES; do
   ssh proxmox "pct push 103 $STAGE/$f $REMOTE_DIR/$f && pct exec 103 -- chown opsagent:opsagent $REMOTE_DIR/$f"
 done
-ssh proxmox "pct exec 103 -- chmod 600 $REMOTE_DIR/webhook_url"
+for f in $SECRET_FILES; do
+  ssh proxmox "pct exec 103 -- chmod 600 $REMOTE_DIR/$f"
+done
 for f in $PY_FILES; do
   ssh proxmox "pct exec 103 -- chmod +x $REMOTE_DIR/$f"
 done

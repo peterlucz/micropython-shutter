@@ -78,12 +78,14 @@ key later, or changing the OpenAI key again.
 | `fetch_proxmox_log.py` | journal warnings, `zpool status -x`, recent failed/warned PVE tasks, last vzdump backup job status (hard floor: any non-`OK` status forces `critical`) |
 | `fetch_immich_log.py` | Immich container status/logs + disk usage (VM root disk *and* the NFS-mounted `/mnt/photo` library — those are separate filesystems, see note below). Hard floors: any non-`Up` container forces `warn`/`critical`; either disk ≥90% used forces `warn`, ≥95% forces `critical`. Redis's routine background-save log lines are collapsed to a one-line summary (see below) rather than passed raw. |
 | `triage.py` | sends the fetched report to Ollama, parses a `SEVERITY: .. / SUMMARY: ..` verdict |
+| `verify_with_cloud.py` | second opinion from OpenAI `gpt-4o-mini` for narrative (non-floor-driven) candidate alerts, see below |
 | `notify.py` | POSTs to the shared HA webhook — only called when severity is `warn` or `critical` |
-| `run_all.py` | fetch -> triage -> notify, the systemd timer's entry point |
+| `run_all.py` | fetch -> triage -> (cloud-verify if narrative) -> notify, the systemd timer's entry point |
 | `ops-triage.service` / `ops-triage.timer` | oneshot + timer, runs every 20 min |
 | `deploy.sh` | pushes everything into LXC 103 and (re)installs the systemd units |
 | `setup-openwebui.sh` | one-time Docker + Open WebUI setup, see below |
 | `webhook_url` | **gitignored** — contains the HA webhook URL, see below |
+| `openai_api_key` | **gitignored** — same key added to Open WebUI, used by `verify_with_cloud.py` |
 
 Note on Immich disk usage: VM102's own disk is only 64 GB, but the actual
 photo library lives on the NAS and is NFS-mounted at `/mnt/photo` (11 TB,
@@ -132,6 +134,30 @@ content, and the gate did nothing on its first deploy. Renamed both to
 avoid trigger words (`"task issues"` / `"(none in the last 30 min)"`). Any
 new "everything's fine" message added to a fetch script needs the same
 check against `ANOMALY_PATTERN` in `run_all.py`.
+
+## Cloud second-opinion for narrative alerts (added 2026-08-26)
+
+Floor-driven alerts (container down, backup failed, disk genuinely over
+threshold) are already fully deterministic and don't need a second opinion.
+But the local 3B model's own *narrative* judgment calls -- the ones that
+passed the anomaly-evidence gate above because real evidence exists
+somewhere in the report, but where the model's read of how serious it is
+has repeatedly been unreliable -- get one more check before paging the
+phone: `verify_with_cloud.py` sends the same raw report + the local model's
+claim to OpenAI `gpt-4o-mini`, and the alert only survives if the cloud
+model agrees it's real. If it disagrees, the notification is suppressed
+entirely (deliberate choice: trust the more capable model over the small
+local one). If the cloud call itself fails (network, quota, etc.), `run_all.py`
+logs it and falls back to the local read rather than silently blocking a
+possibly-real alert.
+
+Verified against two synthetic cases before relying on it: a fabricated
+claim over genuinely empty logs → correctly denied; a real `ERROR` message
+paired with a matching claim → correctly confirmed.
+
+Cost is negligible -- this only fires on candidate alerts (rare), never on
+the routine 20-min cycle, and `gpt-4o-mini` is priced in fractions of a
+cent per call.
 
 ## Backup job monitoring
 
