@@ -52,6 +52,19 @@ def _load_state():
         return {}
 
 
+def _recently_notified(condition_key: str) -> bool:
+    """Read-only peek at whether this exact condition was already notified
+    within the throttle window -- doesn't record anything. Used to skip a
+    cloud verification call entirely for an already-throttled recurring
+    narrative issue: whatever the cloud model says, _should_notify() below
+    will suppress the notification either way, so there's nothing to gain
+    from spending an API call (and its latency) on an outcome the user
+    won't see."""
+    state = _load_state()
+    last = state.get(condition_key)
+    return last is not None and time.time() - last < RENOTIFY_INTERVAL_S
+
+
 def _should_notify(condition_key: str) -> bool:
     """True if this exact condition hasn't been notified recently. Resets
     itself (via main()'s cleanup below) as soon as the condition resolves, so
@@ -106,24 +119,32 @@ def main():
 
     cloud_verdict = ""
     if severity in ALERT_LEVELS and not floor_driven:
-        # Floor-driven alerts are already deterministic (container down, backup
-        # failed, disk genuinely over threshold) -- no need to spend an API
-        # call double-checking those. This branch is specifically the local
-        # 3B model's own narrative judgment, which has repeatedly been
-        # unreliable even after passing the anomaly-evidence gate above. Get
-        # a second opinion from a more capable cloud model before paging the
-        # phone; only proceed if it agrees this is real.
-        try:
-            confirmed, cloud_summary = verify_with_cloud.verify(report, severity, summary, history_text)
-            cloud_verdict = "confirmed" if confirmed else "denied"
-            print(f"[{now}] cloud verification: {cloud_verdict} - {cloud_summary}")
-            if confirmed:
-                summary = cloud_summary
-            else:
-                severity = "none"
-                summary = f"(suppressed: cloud model disagreed) {cloud_summary}"
-        except Exception as e:
-            print(f"[{now}] cloud verification failed ({e}), proceeding with local read")
+        pending_condition_key = (
+            f"severity={severity}|host={host_floor}|immich={immich_floor}|"
+            f"vm100={vm100_floor}|vm101={vm101_floor}|self={self_floor}"
+        )
+        if _recently_notified(pending_condition_key):
+            print(f"[{now}] skipping cloud verification: '{summary}' already notified recently, would be suppressed anyway")
+        else:
+            # Floor-driven alerts are already deterministic (container down,
+            # backup failed, disk genuinely over threshold) -- no need to
+            # spend an API call double-checking those. This branch is
+            # specifically the local 3B model's own narrative judgment,
+            # which has repeatedly been unreliable even after passing the
+            # anomaly-evidence gate above. Get a second opinion from a more
+            # capable cloud model before paging the phone; only proceed if
+            # it agrees this is real.
+            try:
+                confirmed, cloud_summary = verify_with_cloud.verify(report, severity, summary, history_text)
+                cloud_verdict = "confirmed" if confirmed else "denied"
+                print(f"[{now}] cloud verification: {cloud_verdict} - {cloud_summary}")
+                if confirmed:
+                    summary = cloud_summary
+                else:
+                    severity = "none"
+                    summary = f"(suppressed: cloud model disagreed) {cloud_summary}"
+            except Exception as e:
+                print(f"[{now}] cloud verification failed ({e}), proceeding with local read")
 
     notified = False
     if severity in ALERT_LEVELS:

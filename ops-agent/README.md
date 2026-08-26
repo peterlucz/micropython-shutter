@@ -165,8 +165,16 @@ points over ~2h and is already at/above 60%, that's flagged as its own
    baseline (static VM/LXC reservations + ZFS ARC using available RAM by
    design) -- unlike a guest VM, where that really would mean trouble. It
    fired a "warn" on the very first run despite nothing being wrong.
-   Deliberately **not** checked for the host specifically (disk still is);
-   every other target keeps the normal 90%/95% floor.
+   Deliberately **not** checked for the host specifically (disk still is).
+
+**Update 2026-08-26**: the plain >=90%/95% snapshot floor was removed from
+`check_disk_mem()` entirely (for every target, not just the host) once
+`monitoring/`'s Prometheus + Alertmanager stack came online with its own
+`NodeDiskAlmostFull`/`NodeMemoryHigh` rules wired to the same HA webhook --
+keeping both meant the same "disk at 73%" condition could page twice.
+Trend detection (below) stays here since Prometheus's static threshold
+doesn't replicate it; snapshot-threshold alerting is now Prometheus's job
+alone.
 
 **Known limitation, not yet fixed**: the repeat-notification throttle keys
 on the floor combination (`severity|host|immich|vm100|vm101|self`). That's

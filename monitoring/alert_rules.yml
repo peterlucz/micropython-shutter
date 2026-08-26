@@ -24,3 +24,27 @@ groups:
           severity: critical
         annotations:
           summary: "{{ $labels.alias }} node_exporter target is unreachable"
+
+  - name: pve-health
+    rules:
+      # The Proxmox host itself isn't scraped by node_exporter (kept off the
+      # bare host on purpose -- see monitoring/README.md) so it needs its own
+      # rules against pve-exporter's metric names instead of the node-health
+      # group above. Without these, removing ops-agent's own host-disk floor
+      # (host_metrics.py, 2026-08-26) would leave the host's disk completely
+      # unwatched by any threshold anywhere.
+      - alert: PveNodeRootDiskAlmostFull
+        expr: (pve_disk_usage_bytes{id="node/pve"} / pve_disk_size_bytes{id="node/pve"}) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Proxmox host root filesystem usage above 90%"
+
+      - alert: PveStoragePoolAlmostFull
+        expr: (pve_disk_usage_bytes{id="storage/pve/local-zfs"} / pve_disk_size_bytes{id="storage/pve/local-zfs"}) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Proxmox local-zfs storage pool usage above 90%"

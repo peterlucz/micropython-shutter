@@ -74,16 +74,6 @@ def mem_usage_pct(free_text: str):
     return None
 
 
-def _pct_floor(pct):
-    if pct is None:
-        return "none"
-    if pct >= 95:
-        return "critical"
-    if pct >= 90:
-        return "warn"
-    return "none"
-
-
 def _load_history():
     if not HISTORY_FILE.exists():
         return {}
@@ -121,25 +111,26 @@ def _record_and_check_trend(target: str, metric: str, pct):
 
 
 def check_disk_mem(target: str, label: str, disk_text: str, mem_text: str = ""):
-    """Combine disk + RAM floors and trend detection for one target into a
-    single (floor, reason) pair, in the same shape every fetch script uses.
-    `target` is a short stable key (e.g. "vm101") for the trend history;
-    `label` is what shows up in human-readable notification text."""
+    """Trend detection for one target into a (floor, reason) pair, in the
+    same shape every fetch script uses. `target` is a short stable key
+    (e.g. "vm101") for the trend history; `label` is what shows up in
+    human-readable notification text.
+
+    Deliberately does NOT alert on the plain >=90%/95% snapshot anymore
+    (added 2026-08-26): Prometheus's alert_rules.yml (NodeDiskAlmostFull,
+    NodeMemoryHigh) now owns that exact threshold, wired to the same HA
+    webhook via alert_bridge.py -- keeping it here too meant the same
+    "disk at 73%"-style condition could page twice, once from each
+    pipeline. The raw disk/mem numbers still reach the LLM (they're in the
+    report text regardless) and still feed trend detection below, which
+    Prometheus's static threshold doesn't replicate -- a slow climb well
+    under 90% is exactly the case ops-agent's own alerting still adds value
+    for, so that part stays."""
     d_pct = disk_usage_pct(disk_text)
     m_pct = mem_usage_pct(mem_text) if mem_text else None
-    d_floor = _pct_floor(d_pct)
-    m_floor = _pct_floor(m_pct)
     d_trend_floor, d_trend_reason = _record_and_check_trend(target, "disk", d_pct)
     m_trend_floor, m_trend_reason = _record_and_check_trend(target, "mem", m_pct)
 
-    floor = max(d_floor, m_floor, d_trend_floor, m_trend_floor, key=SEVERITY_ORDER.index)
-    reasons = []
-    if d_floor != "none":
-        reasons.append(f"{label} disk at {d_pct}%")
-    if m_floor != "none":
-        reasons.append(f"{label} memory at {m_pct}%")
-    if d_trend_reason:
-        reasons.append(d_trend_reason)
-    if m_trend_reason:
-        reasons.append(m_trend_reason)
+    floor = max(d_trend_floor, m_trend_floor, key=SEVERITY_ORDER.index)
+    reasons = [r for r in (d_trend_reason, m_trend_reason) if r]
     return floor, "; ".join(reasons)
