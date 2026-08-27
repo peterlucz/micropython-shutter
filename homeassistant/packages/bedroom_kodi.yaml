@@ -17,11 +17,48 @@
 #
 # The off automation cuts the socket a minute after the Kodi entity goes
 # off/unavailable — which also happens when Kodi is merely UNREACHABLE
-# (WiFi blip, Kodi crash), so it additionally requires the socket's power
-# meter to confirm the halt: a running Pi draws a steady ~5 W, a halted
-# one well under 1 W (measured 2026-07-11..17), threshold 2 W. Same for
-# the stuck-state button branch. If power stays high the socket is left
-# alone and the trigger simply re-fires on the next off transition.
+# (WiFi blip, Kodi crash), so it additionally requires confirmation that
+# the Pi has actually halted. Same for the stuck-state button branch. If
+# the Pi still looks up, the socket is left alone and the trigger simply
+# re-fires on the next off transition.
+#
+# Confirmation used to be the socket's power meter alone (running ~5 W,
+# halted well under 1 W, threshold 2 W — measured 2026-07-11..17). Broke
+# once inside-socket-3 started also powering a Chromecast on the same
+# relay: the Chromecast's own idle draw (~3.9-4.7 W) sits above the 2 W
+# threshold on its own, so the condition failed on every run from
+# 2026-08-11 through 2026-08-25 and the socket never cut — confirmed via
+# automation traces (all `failed_conditions` at the power check) and a
+# week of sensor.inside_socket_3_power history (never settles under 2 W
+# once the Chromecast is sharing the circuit, even overnight with the Pi
+# genuinely off).
+#
+# Replaced 2026-08-26 with binary_sensor.bedroom_kodi_pi_reachable (HA's
+# "Ping (ICMP)" integration against the Pi's IP 192.168.1.22 — note: IP,
+# not the mDNS hostname LibreELEC-halo.local, since HAOS couldn't resolve
+# .local names itself. Confirm 192.168.1.22 has a DHCP reservation; if
+# not, revisit this if the lease ever moves). That sensor still polls on
+# its own fixed 5-minute schedule regardless of anything else, which
+# bounded off-detection latency at up to ~6 minutes.
+#
+# Tightened same day, twice:
+#
+# 1st attempt: gate pinging on socket power dropping below a threshold
+# (~4.9 W, between the Chromecast's idle ceiling and Kodi's playing
+# floor), to avoid pinging at all while Kodi's obviously in use. Reverted
+# within the hour — sensor.inside_socket_3_power is a zigbee2mqtt sensor
+# that only reports on its own schedule/delta threshold, not something HA
+# polls on demand. Caught it live: it sat at a stale 4.91 W for 20+
+# minutes spanning an actual Kodi shutdown, permanently above the gate,
+# so the trigger never fired even though the Pi had genuinely halted.
+# Unreliable as a gate; not used for triggering or aborting any more.
+#
+# Current design: triggers directly off media_player.libreelec_halo going
+# off/unavailable (the Kodi integration's own live WebSocket push — fast,
+# reliable, no polling gap), same as the original fix. From there it
+# actively re-pings the Pi every 15 s and cuts the socket once 3
+# consecutive checks come back unreachable — debounces a single
+# transient WiFi packet-loss blip from being mistaken for a real halt.
 #
 # Replaces the UI-managed pair "Socket:Bedroom:Kodi:On/Off" (deleted
 # 2026-07-18), which could cut power to a live Pi and whose buttons only
@@ -76,13 +113,23 @@ automation:
                 data:
                   method: System.Shutdown
                 continue_on_error: true
-          # stuck: socket on, Kodi down, power confirms the halt ->
-          # power-cycle to reboot
+          # stuck: socket on, Kodi down, Pi confirmed unreachable ->
+          # power-cycle to reboot. Force a fresh ping first — the
+          # background poll is only every 5 min, too stale to trust for
+          # a button press someone is standing at right now.
           - conditions:
-              - condition: numeric_state
-                entity_id: sensor.inside_socket_3_power
-                below: 2
+              - condition: state
+                entity_id: binary_sensor.bedroom_kodi_pi_reachable
+                state: "off"
             sequence:
+              - action: homeassistant.update_entity
+                target:
+                  entity_id: binary_sensor.bedroom_kodi_pi_reachable
+              - delay:
+                  seconds: 5
+              - condition: state
+                entity_id: binary_sensor.bedroom_kodi_pi_reachable
+                state: "off"
               - action: switch.turn_off
                 target:
                   entity_id: switch.inside_socket_3
@@ -98,8 +145,9 @@ automation:
   - id: bedroom_kodi_off
     alias: "Socket:Bedroom:Kodi:Off"
     description: >-
-      Cuts the bedroom Kodi socket a minute after Kodi goes down, but
-      only once the power meter confirms the Pi has actually halted.
+      A minute after Kodi goes off/unavailable, re-pings the Pi every
+      15s. Cuts the socket once 3 consecutive checks come back
+      unreachable (debounces a single transient WiFi blip).
     triggers:
       - trigger: state
         entity_id: media_player.libreelec_halo
@@ -113,11 +161,31 @@ automation:
       - condition: state
         entity_id: switch.inside_socket_3
         state: "on"
-      - condition: numeric_state
-        entity_id: sensor.inside_socket_3_power
-        below: 2
     actions:
-      - action: switch.turn_off
-        target:
-          entity_id: switch.inside_socket_3
+      - variables:
+          miss_count: 0
+      - repeat:
+          count: 40   # 40 x 15s = 10 min worst case before giving up
+          sequence:
+            - condition: state
+              entity_id: switch.inside_socket_3
+              state: "on"
+            - action: homeassistant.update_entity
+              target:
+                entity_id: binary_sensor.bedroom_kodi_pi_reachable
+            - delay:
+                seconds: 5
+            - variables:
+                miss_count: >-
+                  {{ (miss_count + 1) if is_state('binary_sensor.bedroom_kodi_pi_reachable', 'off') else 0 }}
+            - if:
+                - condition: template
+                  value_template: "{{ miss_count >= 3 }}"
+              then:
+                - action: switch.turn_off
+                  target:
+                    entity_id: switch.inside_socket_3
+                - stop: "Pi unreachable on 3 consecutive checks, socket cut"
+            - delay:
+                seconds: 10
     mode: single
