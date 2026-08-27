@@ -110,27 +110,41 @@ def _record_and_check_trend(target: str, metric: str, pct):
     return "none", ""
 
 
-def check_disk_mem(target: str, label: str, disk_text: str, mem_text: str = ""):
+def check_disk_mem(target: str, label: str, disk_text: str, mem_text: str = "", disk_snapshot_floor_pct=None):
     """Trend detection for one target into a (floor, reason) pair, in the
     same shape every fetch script uses. `target` is a short stable key
     (e.g. "vm101") for the trend history; `label` is what shows up in
     human-readable notification text.
 
-    Deliberately does NOT alert on the plain >=90%/95% snapshot anymore
+    Deliberately does NOT alert on a plain snapshot threshold by default
     (added 2026-08-26): Prometheus's alert_rules.yml (NodeDiskAlmostFull,
-    NodeMemoryHigh) now owns that exact threshold, wired to the same HA
-    webhook via alert_bridge.py -- keeping it here too meant the same
-    "disk at 73%"-style condition could page twice, once from each
-    pipeline. The raw disk/mem numbers still reach the LLM (they're in the
-    report text regardless) and still feed trend detection below, which
-    Prometheus's static threshold doesn't replicate -- a slow climb well
-    under 90% is exactly the case ops-agent's own alerting still adds value
-    for, so that part stays."""
+    NodeMemoryHigh) already owns that for the host/VM root filesystems,
+    wired to the same HA webhook via alert_bridge.py -- keeping it here too
+    meant the same "disk at 73%"-style condition could page twice, once
+    from each pipeline. The raw disk/mem numbers still reach the LLM
+    (they're in the report text regardless) and still feed trend detection
+    below, which Prometheus's static threshold doesn't replicate -- a slow
+    climb well under any snapshot threshold is exactly the case ops-agent's
+    own alerting still adds value for, so that part stays.
+
+    `disk_snapshot_floor_pct`, when given, restores a plain deterministic
+    "warn at >=N%" floor for this target specifically. Needed for mounts
+    Prometheus's NodeDiskAlmostFull rule doesn't reach -- it only watches
+    mountpoint="/", not NFS mounts like Immich's /mnt/photo. Without this,
+    such a mount has *no* deterministic threshold in either pipeline, and
+    is left entirely to the small local LLM's own narrative judgment --
+    caught live 2026-08-27 flip-flopping "info"/"warn" on the same
+    unchanging 73% reading run to run."""
     d_pct = disk_usage_pct(disk_text)
     m_pct = mem_usage_pct(mem_text) if mem_text else None
     d_trend_floor, d_trend_reason = _record_and_check_trend(target, "disk", d_pct)
     m_trend_floor, m_trend_reason = _record_and_check_trend(target, "mem", m_pct)
 
-    floor = max(d_trend_floor, m_trend_floor, key=SEVERITY_ORDER.index)
-    reasons = [r for r in (d_trend_reason, m_trend_reason) if r]
+    d_snapshot_floor, d_snapshot_reason = "none", ""
+    if disk_snapshot_floor_pct is not None and d_pct is not None and d_pct >= disk_snapshot_floor_pct:
+        d_snapshot_floor = "warn"
+        d_snapshot_reason = f"{label} disk usage at {d_pct}% (>= {disk_snapshot_floor_pct}% threshold)"
+
+    floor = max(d_trend_floor, m_trend_floor, d_snapshot_floor, key=SEVERITY_ORDER.index)
+    reasons = [r for r in (d_trend_reason, m_trend_reason, d_snapshot_reason) if r]
     return floor, "; ".join(reasons)

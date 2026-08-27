@@ -10,6 +10,14 @@ Usage: ./fetch_self_log.py
 """
 import host_metrics
 
+# Section label deliberately says "core" not "critical" -- run_all.py's
+# ANOMALY_PATTERN gate (which decides whether the LLM is allowed to escalate
+# severity at all) matches "critical" anywhere in the combined report. It
+# used to say "critical services" here, which kept that gate permanently
+# open on every single run regardless of actual content (caught live
+# 2026-08-27 investigating repeated false disk-usage "warn" alerts). Don't
+# reintroduce an ANOMALY_PATTERN keyword in a routine/healthy-state string
+# anywhere in this file or the other fetch_*.py scripts.
 SERVICES = ["ollama", "docker", "ops-triage.timer"]
 SEVERITY_ORDER = host_metrics.SEVERITY_ORDER
 
@@ -33,7 +41,7 @@ def fetch():
         f"{disk}\n\n"
         "=== ops-agent (CT103, self): memory usage ===\n"
         f"{mem}\n\n"
-        "=== ops-agent (CT103, self): critical services ===\n"
+        "=== ops-agent (CT103, self): core services ===\n"
         + ("; ".join(down_services) if down_services else "all active (ollama, docker, ops-triage.timer)")
         + "\n"
     )

@@ -99,7 +99,14 @@ def fetch():
     root_floor, root_reason = host_metrics.check_disk_mem("vm102_root", "Immich VM root", disk_root, mem)
     # Photo library only has a disk mount (no separate mem concept), and mem
     # is already covered by root_floor -- pass no mem_text here to skip it.
-    photo_floor, photo_reason = host_metrics.check_disk_mem("vm102_photo", "Photo library", disk_photo)
+    # disk_snapshot_floor_pct=90: this NFS mount isn't watched by Prometheus's
+    # NodeDiskAlmostFull (mountpoint="/" only), so it needs its own
+    # deterministic floor here -- it's large, slow-growing NAS storage, so
+    # 90% (matching Prometheus's own convention) rather than flagging every
+    # normal fluctuation in the 70s/80s.
+    photo_floor, photo_reason = host_metrics.check_disk_mem(
+        "vm102_photo", "Photo library", disk_photo, disk_snapshot_floor_pct=90,
+    )
 
     floor = max(c_floor, root_floor, photo_floor, key=SEVERITY_ORDER.index)
     reason = "; ".join(r for r in (

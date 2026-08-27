@@ -26,9 +26,14 @@ Here is the raw data it was given:
 
 Is this actually a real, worth-paging-someone's-phone issue, or is it a misread/false positive/\
 hallucination by the small model? This local model has repeatedly invented issues that don't \
-exist in the data (e.g. claiming errors when a container's logs were completely empty, or \
-misjudging normal disk usage well under any real threshold as critical). Check the raw data \
-yourself rather than trusting the claim.
+exist in the data (e.g. claiming errors when a container's logs were completely empty, \
+misjudging normal disk usage well under any real threshold as critical, or once inventing \
+"corrupt image files" failing Immich jobs when the actual container logs for that window had \
+zero errors and no container had restarted). A plausible-sounding claim is not evidence -- find \
+the specific line(s) in the raw data below that back up the specific claim in the summary. If \
+you cannot point to actual matching text (an error, a failed job, a stopped container, a \
+concrete number over a real threshold), deny it as unconfirmed even if the claim sounds \
+reasonable in isolation.
 
 {history}
 
