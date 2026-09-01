@@ -474,6 +474,13 @@ async def main(client):
         except OSError:
             attempts += 1
             print('Connection failed (attempt {}) — retrying in 10 s.'.format(attempts))
+            # mqtt_as's wifi_connect() reconnects unconditionally on retry, with
+            # no "already associated" guard on this port (unlike its ESP8266
+            # branch) — reassociating while still connected corrupts the cyw43
+            # link until the next hard reset. Disconnect first so the retry
+            # starts from a clean, disconnected state instead.
+            if _wlan.isconnected():
+                _wlan.disconnect()
             if attempts >= 30:
                 machine.reset()
             await asyncio.sleep(10)
