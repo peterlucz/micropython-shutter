@@ -14,16 +14,16 @@ scrape_configs:
     static_configs:
       - targets: ["192.168.1.26:9100"]
         labels: {alias: "vm101-desktop"}
-      - targets: ["192.168.1.99:9100"]
+      - targets: ["10.30.0.102:9100"]
         labels: {alias: "vm102-immich"}
-      - targets: ["192.168.1.59:9100"]
+      - targets: ["10.30.0.103:9100"]
         labels: {alias: "ct103-opsagent"}
       - targets: ["192.168.1.12:9100"]
         labels: {alias: "ct104-monitoring"}
 
   - job_name: "cadvisor"
     static_configs:
-      - targets: ["192.168.1.99:8080"]
+      - targets: ["10.30.0.102:8080"]
         labels: {alias: "vm102-immich-containers"}
 
   - job_name: "pve"
