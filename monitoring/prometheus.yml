@@ -18,7 +18,7 @@ scrape_configs:
         labels: {alias: "vm102-immich"}
       - targets: ["10.30.0.103:9100"]
         labels: {alias: "ct103-opsagent"}
-      - targets: ["192.168.1.12:9100"]
+      - targets: ["10.30.0.104:9100"]
         labels: {alias: "ct104-monitoring"}
 
   - job_name: "cadvisor"
