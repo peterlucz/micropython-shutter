@@ -12,7 +12,7 @@ rule_files:
 scrape_configs:
   - job_name: "node"
     static_configs:
-      - targets: ["192.168.1.26:9100"]
+      - targets: ["10.30.0.101:9100"]
         labels: {alias: "vm101-desktop"}
       - targets: ["10.30.0.102:9100"]
         labels: {alias: "vm102-immich"}
