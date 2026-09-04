@@ -9,7 +9,7 @@ it never touches any of the monitored machines, it just reads and reports.
 ## Where it runs
 
 **LXC 103** ("ops-agent") on the Proxmox host `pve`, Debian 13, DHCP IP
-(currently `192.168.1.59`), 4 cores / 6 GB RAM / 16 GB disk (bumped from
+(currently `10.30.0.103`), 4 cores / 6 GB RAM / 16 GB disk (bumped from
 4 GB after an OOM-kill on Ollama while Docker/Open WebUI + model swapping
 were all active at once). Ollama
 (`llama3.2:3b`, CPU-only) runs there too, listening on `localhost:11434`.
@@ -29,7 +29,7 @@ The same LXC also runs [Open WebUI](https://github.com/open-webui/open-webui)
 (Docker, `--network host` so it can reach Ollama at `127.0.0.1:11434` without
 any port-mapping/DNS tricks) as a general chat frontend -- unrelated to the
 triage pipeline, just reusing the same local models. Browse to
-`http://192.168.1.59:8080` from any device on the LAN; first visit creates
+`http://10.30.0.103:8080` from any device on the LAN; first visit creates
 the admin account (`WEBUI_AUTH=true`, since it's reachable from the whole
 LAN, not just localhost). Chat history persists in the `open-webui` Docker
 volume; the container is `--restart always` so it survives LXC reboots.

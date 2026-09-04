@@ -9,7 +9,7 @@ scoped to reading unstructured logs and catching things no metric captures.
 
 ## Where it runs
 
-New LXC, CT ID 104, hostname `monitoring`, IP `192.168.1.12`. 2 cores / 2GB
+New LXC, CT ID 104, hostname `monitoring`, IP `10.30.0.104` (moved from `192.168.1.12` to the Servers VLAN, 2026-09-04). 2 cores / 2GB
 RAM (host only had ~3.8GB genuinely unreserved at the time -- bump if it
 gets tight, same as CT103's RAM history). Docker + Docker Compose, nesting
 enabled at creation (`pct create ... --features nesting=1`).
@@ -40,10 +40,10 @@ enabled at creation (`pct create ... --features nesting=1`).
 | Target | Method | Notes |
 |---|---|---|
 | Proxmox host | `pve-exporter` → PVE API | Read-only `monitoring@pve` user, `PVEAuditor` role, API token `prometheus`. Token lives in gitignored `pve_token`, templated into `pve.yml` at deploy time from `pve.yml.template`. |
-| VM101 (desktop) | `node_exporter` (apt, `prometheus-node-exporter`), installed directly -- this is the machine these sessions run on | `192.168.1.26:9100` |
-| VM102 (Immich) | `node_exporter` (apt) + `cAdvisor` (docker container, `gcr.io/cadvisor/cadvisor`) | `192.168.1.99:9100` and `:8080` -- cAdvisor gives per-container CPU/mem/network for the Immich stack |
-| CT103 (ops-agent) | `node_exporter` (apt) | `192.168.1.59:9100` |
-| CT104 (monitoring, self) | `node_exporter` (apt) | `192.168.1.12:9100` -- self-monitoring; note the scrape target must be the LXC's real IP, not `localhost` (that resolves to the Prometheus *container* itself under docker-compose's bridge network, not the LXC host) |
+| VM101 (desktop) | `node_exporter` (apt, `prometheus-node-exporter`), installed directly -- this is the machine these sessions run on | `10.30.0.101:9100` |
+| VM102 (Immich) | `node_exporter` (apt) + `cAdvisor` (docker container, `gcr.io/cadvisor/cadvisor`) | `10.30.0.102:9100` and `:8080` -- cAdvisor gives per-container CPU/mem/network for the Immich stack |
+| CT103 (ops-agent) | `node_exporter` (apt) | `10.30.0.103:9100` |
+| CT104 (monitoring, self) | `node_exporter` (apt) | `10.30.0.104:9100` -- self-monitoring; note the scrape target must be the LXC's real IP, not `localhost` (that resolves to the Prometheus *container* itself under docker-compose's bridge network, not the LXC host) |
 | VM100 (HAOS) | **not monitored at the host/OS level** | HAOS is a locked-down appliance (immutable, no generic package manager, no SSH, only reachable via `qm guest exec`) -- there's no supported way to run `node_exporter` on it. Home Assistant does have its own built-in Prometheus integration (`/api/prometheus`) for *entity* metrics, which is a different, optional scope not set up here. |
 
 ## Dashboards (imported via Grafana's HTTP API from grafana.com)
@@ -70,7 +70,7 @@ not as another docker-compose service -- simple enough not to need
 containerizing, and it needs a stable place for its `webhook_url` file
 regardless. Because Alertmanager reaches it from inside docker's bridge
 network, `alertmanager.yml` points at the LXC's real IP
-(`192.168.1.12:9099`), not `localhost` -- same gotcha as the CT104
+(`10.30.0.104:9099`), not `localhost` -- same gotcha as the CT104
 self-monitoring node_exporter target.
 
 `deploy.sh` restarts both `prometheus` and `alertmanager` after every push

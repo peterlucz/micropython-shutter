@@ -35,7 +35,7 @@ ssh proxmox "pct push 104 $STAGE/pve.yml $REMOTE_DIR/pve.yml && pct exec 104 -- 
 
 # alert_bridge.py runs directly on the LXC (systemd), not in docker compose --
 # it needs to be reachable from the Alertmanager container by the LXC's real
-# IP (192.168.1.12:9099 in alertmanager.yml), same reason CT104's own
+# IP (10.30.0.104:9099 in alertmanager.yml), same reason CT104's own
 # node_exporter target can't be scraped via "localhost" either.
 scp -q "alert-bridge.service" "proxmox:$STAGE/alert-bridge.service"
 ssh proxmox "pct push 104 $STAGE/alert-bridge.service /etc/systemd/system/alert-bridge.service"
@@ -50,7 +50,7 @@ ssh proxmox "pct exec 104 -- bash -c 'cd $REMOTE_DIR && docker compose restart p
 ssh proxmox "rm -rf $STAGE"
 
 echo "deployed."
-echo "Prometheus:   http://192.168.1.12:9090"
-echo "Grafana:      http://192.168.1.12:3000"
-echo "Alertmanager: http://192.168.1.12:9093"
+echo "Prometheus:   http://10.30.0.104:9090"
+echo "Grafana:      http://10.30.0.104:3000"
+echo "Alertmanager: http://10.30.0.104:9093"
 echo "check alert-bridge with: ssh proxmox \"pct exec 104 -- systemctl status alert-bridge --no-pager\""

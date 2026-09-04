@@ -24,4 +24,4 @@ ssh proxmox 'pct exec 103 -- docker run -d \
   --restart always \
   ghcr.io/open-webui/open-webui:main'
 
-echo "Open WebUI starting -- give it ~30s, then browse to http://192.168.1.59:8080"
+echo "Open WebUI starting -- give it ~30s, then browse to http://10.30.0.103:8080"
