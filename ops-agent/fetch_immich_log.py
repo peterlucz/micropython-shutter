@@ -6,7 +6,9 @@ SSH access set up.
 
 Usage: ./fetch_immich_log.py
 """
+import json
 import re
+import urllib.request
 
 import host_metrics
 
@@ -66,6 +68,52 @@ def _container_down_reason(ps_text: str) -> str:
     return "; ".join(down)
 
 
+def _get_ml_urls() -> list:
+    """Read Immich's own configured machine-learning backend URL(s) straight
+    from its database (Settings -> Machine Learning -> URLs in the admin UI)
+    -- the actual source of truth for which backend(s) Immich will try, and
+    not visible in any docker-compose/env file on either VM. This exact gap
+    let a stale entry (VM101's pre-migration IP) sit unnoticed for hours
+    after VM101's VLAN move, 2026-09-04, caught only by hand -- see
+    local-ai-gpu-hardware-options.md."""
+    out = host_metrics.guest_exec(
+        VMID, "docker", "exec", "immich_postgres", "psql", "-U", "postgres", "-d", "immich",
+        "-tA", "-c",
+        "SELECT value->'machineLearning'->'urls' FROM system_metadata WHERE key = 'system-config';",
+    )
+    try:
+        return json.loads(out)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def remote_ml_floor(urls: list) -> tuple:
+    """Immich's *local* ML container is already covered by container_floor
+    above (it's in CONTAINERS, checked via qm guest exec). Any *other* URL in
+    this list is a remote backend (currently: VM101's GPU-accelerated
+    OpenVINO container, see local-ai-gpu-hardware-options.md) reachable only
+    over the network -- check it directly with a real HTTP request rather
+    than trusting Immich's own healthy/unhealthy log lines, since a stale or
+    unreachable URL just quietly stops appearing in those logs rather than
+    producing an obvious error to grep for."""
+    remote = [u for u in urls if "immich-machine-learning" not in u]
+    if not remote:
+        return "none", ""
+    problems = []
+    for url in remote:
+        try:
+            with urllib.request.urlopen(f"{url}/ping", timeout=6) as resp:
+                if resp.status != 200:
+                    problems.append(f"{url} returned HTTP {resp.status}")
+        except Exception as e:
+            problems.append(f"{url} unreachable: {e}")
+    if problems:
+        # warn, not critical -- Immich still works via the local CPU fallback,
+        # this is a silent performance regression, not an outage.
+        return "warn", "Remote ML backend unreachable, silently degraded to CPU-only inference: " + "; ".join(problems)
+    return "none", ""
+
+
 def fetch():
     ps = host_metrics.guest_exec(VMID, "docker", "ps", "-a", "--format", "{{.Names}}\\t{{.Status}}")
     # / is the VM's own 64G disk (docker images/db); /mnt/photo is the NFS-mounted
@@ -82,9 +130,16 @@ def fetch():
             out = _summarize_redis_log(out)
         logs.append(f"--- {name} ---\n{out}")
 
+    ml_urls = _get_ml_urls()
+    ml_floor, ml_reason = remote_ml_floor(ml_urls)
+
     text = (
         "=== Immich (VM102): container status ===\n"
         f"{ps}\n\n"
+        "=== Immich (VM102): configured machine-learning backend(s) ===\n"
+        f"{ml_urls or '(could not read system-config)'}"
+        + (f"  <-- PROBLEM: {ml_reason}" if ml_floor != "none" else "  (all reachable)")
+        + "\n\n"
         "=== Immich (VM102): disk usage (VM root / docker) ===\n"
         f"{disk_root}\n\n"
         "=== Immich (VM102): disk usage (photo library, NFS mount) ===\n"
@@ -108,11 +163,12 @@ def fetch():
         "vm102_photo", "Photo library", disk_photo, disk_snapshot_floor_pct=90,
     )
 
-    floor = max(c_floor, root_floor, photo_floor, key=SEVERITY_ORDER.index)
+    floor = max(c_floor, root_floor, photo_floor, ml_floor, key=SEVERITY_ORDER.index)
     reason = "; ".join(r for r in (
         _container_down_reason(ps) if c_floor != "none" else "",
         root_reason,
         photo_reason,
+        ml_reason,
     ) if r)
     return text, floor, reason
 
