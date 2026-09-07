@@ -40,6 +40,42 @@ def _summarize_redis_log(raw_log: str) -> str:
     return raw_log
 
 
+def _summarize_postgres_log(raw_log: str) -> str:
+    # UQ_assets_owner_checksum fires only when a client tries to (re-)insert
+    # an asset whose content checksum already exists for that owner -- by
+    # definition this can only mean "already backed up", never data loss or
+    # corruption; Immich's own DB is doing exactly its job rejecting it.
+    # Found 2026-09-07: a mobile client with a stuck upload-queue entry can
+    # retry the same handful of already-uploaded photos indefinitely (every
+    # ~10-15 min), and each retry looks like a fresh error to the log, so the
+    # 3B model re-flagged it as "warn" on every single triage cycle even
+    # though it's the identical, already-known, harmless situation each
+    # time. Same fix shape as the Redis background-save case above: collapse
+    # to a one-line summary rather than passing raw repeated ERROR blocks
+    # through, so there's nothing that reads as "new" for the model to
+    # misjudge. Other Postgres errors (an actual constraint we don't
+    # recognize, connection issues, etc.) still pass through raw.
+    if raw_log.startswith("(") or raw_log == "(no output)":
+        return raw_log
+    dup_checksum = re.findall(
+        r'duplicate key value violates unique constraint "UQ_assets_owner_checksum"', raw_log,
+    )
+    other_errors = [
+        line for line in raw_log.splitlines()
+        if re.search(r"error|fatal|panic", line, re.IGNORECASE)
+        and "UQ_assets_owner_checksum" not in line
+    ]
+    if dup_checksum and not other_errors:
+        return (
+            f"{len(dup_checksum)} duplicate-checksum rejection(s) on asset inserts in the last 30 min "
+            "-- a client re-uploading content it has already backed up successfully; Immich's DB "
+            "correctly rejects these, no data loss or corruption. Known benign pattern, not actionable."
+        )
+    if other_errors:
+        return "Anomalies found in postgres log:\n" + "\n".join(other_errors[-10:])
+    return raw_log
+
+
 def container_floor(ps_text: str) -> str:
     """Deterministic severity floor from container status -- a stopped/crashed
     container is an objective fact, not a judgment call, so don't leave it to
@@ -128,6 +164,8 @@ def fetch():
         out = host_metrics.guest_exec(VMID, "docker", "logs", "--since", "30m", "--tail", "50", name)
         if name == "immich_redis":
             out = _summarize_redis_log(out)
+        elif name == "immich_postgres":
+            out = _summarize_postgres_log(out)
         logs.append(f"--- {name} ---\n{out}")
 
     ml_urls = _get_ml_urls()
