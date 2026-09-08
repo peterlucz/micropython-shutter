@@ -47,6 +47,7 @@ All topics are prefixed with the MAC-derived `{device_id}` (e.g. `pico_relay_ab1
 | `{device_id}/switch/{id}/set` | HA → Pico | `ON` / `OFF` |
 | `{device_id}/switch/{id}/state` | Pico → HA | `ON` / `OFF` |
 | `{device_id}/config` | HA → Pico | Full `devices.json` JSON (retain=True) |
+| `{device_id}/mqtt_config` | HA → Pico | `{"server": ..., "user": ..., "password": ...}` — broker override (retain=False; reboots to apply) |
 | `{device_id}/status` | Pico → HA | `"online"` / `"offline"` — availability + heartbeat, retained |
 | `homeassistant/cover/{DEVICE_ID}_{id}/config` | Pico → HA | MQTT discovery payload (retain=True) |
 | `homeassistant/switch/{DEVICE_ID}_{id}/config` | Pico → HA | MQTT discovery payload (retain=True) |
@@ -89,6 +90,9 @@ DEBUG            = True
 
 ### Updating config from Home Assistant
 Publish the updated JSON to `{device_id}/config` (e.g. `pico_relay_ab12cd/config`) with **retain=True** in HA Developer Tools → MQTT, or use `update_config.sh`. The Pico saves it to `devices.json` on receipt; reboot to apply a new device layout. Position values in the incoming config are ignored — live positions are preserved automatically. Malformed configs (string ids, unknown types, missing relay/timing keys) are rejected with a serial log message and neither saved nor acted on.
+
+### Updating the MQTT broker without a USB visit
+Publish `{"server": "...", "user": "...", "password": "..."}` (any subset of these keys) to `{device_id}/mqtt_config` with **retain=False** — a retained message here is deliberately ignored rather than acted on, since replaying it on every reconnect would reboot-loop the board. The Pico merges the given fields into `mqtt_override.json` on flash (partial updates don't clear the others) and reboots immediately to reconnect with the new settings; `mqtt_local.py` reads this file at boot and it takes priority over `config.py`/`secrets.py`. WiFi credentials are **not** covered by this mechanism — updating `WIFI_SSID`/`WIFI_PASSWORD` this way would need the new WiFi to already work before a message changing it could ever arrive, so a WiFi change still needs a USB visit. There's no automatic rollback if the new broker/credentials are wrong: the board will just retry the unreachable broker forever, same as any other connect failure, needing a USB visit to recover. **Always test on a spare board first**, then roll field boards out one at a time, confirming each one's retained `status` topic reappears on the new broker before moving to the next.
 
 ## Development Notes
 
@@ -155,5 +159,5 @@ No YAML configuration needed. The Pico publishes MQTT Discovery messages on ever
 
 - **Add a device**: Add an entry to `devices.json` and publish to `{device_id}/config` with retain, or edit the file and redeploy
 - **Change relay pins or timing**: Edit `devices.json` (or publish new config via MQTT)
-- **Change MQTT broker**: Edit `config.py` (topics are derived from the MAC-based `DEVICE_ID` in `main.py`)
+- **Change MQTT broker**: Edit `config.py` and redeploy, or publish to `{device_id}/mqtt_config` (see above) to do it over MQTT without a USB visit
 - **Change WiFi or MQTT credentials**: Edit `secrets.py`
