@@ -1,6 +1,6 @@
 from mqtt_as import MQTTClient
 from mqtt_local import wifi_led, blue_led, config
-from config import DEVICES_FILE, DISCOVERY_FILE, DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG
+from config import DEVICES_FILE, DISCOVERY_FILE, DISCOVERY_PREFIX, KEEPALIVE, QUEUE_LEN, DEBUG, MQTT_OVERRIDE_FILE
 import uasyncio as asyncio
 import machine
 from machine import Pin
@@ -19,6 +19,7 @@ DEVICE_ID    = 'pico_relay_{}'.format(_suffix)
 DEVICE_NAME  = 'Pico Relay {}'.format(_suffix.upper())
 STATUS_TOPIC = '{}/status'.format(DEVICE_ID)
 CONFIG_TOPIC = '{}/config'.format(DEVICE_ID)
+MQTT_CONFIG_TOPIC = '{}/mqtt_config'.format(DEVICE_ID)
 
 # Keyed by device id, populated from devices.json on boot.
 devices      = {}
@@ -119,6 +120,47 @@ def apply_mqtt_config(payload):
             stale.add((component, dev_id))
     if stale:
         asyncio.create_task(clear_discovery(stale))
+
+
+def apply_mqtt_override(payload):
+    """One-time broker-migration helper: update the MQTT server/credentials
+    without a USB visit (WiFi credentials are NOT covered -- see
+    mqtt_local.py's comment on why). Merges into any existing override file
+    so a partial update doesn't clear other fields, then reboots to apply --
+    mqtt_as connects to the broker once at startup, there's no live
+    re-point. A bad push (wrong host, wrong password) means the board will
+    retry forever against a broker it can't reach, same as any other
+    connect failure -- there is no automatic rollback, so test on a spare
+    board first and roll field boards out one at a time, confirming each
+    one's retained status topic reappears on the new broker before moving
+    on to the next."""
+    try:
+        new_data = ujson.loads(payload)
+    except ValueError:
+        print('Rejected mqtt_config update: not valid JSON')
+        return
+    if not isinstance(new_data, dict) or not new_data:
+        print('Rejected mqtt_config update: expected a non-empty JSON object')
+        return
+    allowed = {'server', 'user', 'password'}
+    bad_keys = [k for k in new_data if k not in allowed]
+    if bad_keys:
+        print('Rejected mqtt_config update: unknown key(s) {}'.format(bad_keys))
+        return
+    if any(not isinstance(v, str) or not v for v in new_data.values()):
+        print('Rejected mqtt_config update: values must be non-empty strings')
+        return
+    try:
+        with open(MQTT_OVERRIDE_FILE) as f:
+            merged = ujson.load(f)
+    except (OSError, ValueError):
+        merged = {}
+    merged.update(new_data)
+    with open(MQTT_OVERRIDE_FILE, 'w') as f:
+        ujson.dump(merged, f)
+    safe = {k: ('***' if k == 'password' else v) for k, v in merged.items()}
+    print('MQTT broker settings updated on disk, rebooting to apply: {}'.format(safe))
+    machine.reset()
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +436,14 @@ async def messages(client):
                 apply_mqtt_config(payload)
                 continue
 
+            if topic_str == MQTT_CONFIG_TOPIC:
+                # Never act on a replayed retained message -- this one
+                # reboots the board, so a stray retained payload left on the
+                # broker would reboot-loop it on every single reconnect.
+                if not retained:
+                    apply_mqtt_override(payload)
+                continue
+
             # Only the config topic is legitimately retained. A retained
             # command would be replayed on every reconnect and physically
             # move a shutter each time — drop it.
@@ -436,6 +486,7 @@ async def up(client):
         await client.publish(STATUS_TOPIC, 'online', retain=True, qos=1)
         await publish_discovery()
         await client.subscribe(CONFIG_TOPIC, 1)
+        await client.subscribe(MQTT_CONFIG_TOPIC, 1)
         for dev_id, device in devices.items():
             if device['type'] == 'shutter':
                 await client.subscribe('{}/shutter/{}/set_position'.format(DEVICE_ID, dev_id), 1)
