@@ -38,6 +38,45 @@ views:
             show_current: false
             show_forecast: true
 
+          # ── Sun position + sunrise/sunset ────────────────────────
+          # NOTE: there is no built-in "sun" card type in HA -- that was
+          # wrong (caused a "configuration error"). The actual built-in
+          # approach: the `sun` integration already creates
+          # sensor.sun_next_rising / sensor.sun_next_setting (enabled by
+          # default) plus sensor.sun_solar_elevation / _azimuth, which
+          # exist but ship *disabled* -- enabled once via entity registry
+          # (config/entity_registry/update, disabled_by: null) + a reload
+          # of the sun config entry, 2026-09-08. No HACS/custom card
+          # needed; this instance has neither HACS nor any lovelace
+          # resources installed (checked 2026-09-08).
+          - type: entities
+            title: Sunrise / sunset
+            entities:
+              - entity: sensor.sun_next_rising
+                name: Sunrise
+                icon: mdi:weather-sunset-up
+              - entity: sensor.sun_next_setting
+                name: Sunset
+                icon: mdi:weather-sunset-down
+          - type: gauge
+            entity: sensor.sun_solar_elevation
+            name: Sun elevation
+            min: -90
+            max: 90
+            needle: true
+            segments:
+              - {from: -90, color: "#37474f"}
+              - {from: 0, color: "#4caf50"}
+              - {from: 90, color: "#ffca28"}
+            grid_options: {columns: 4, rows: 2}
+          - type: gauge
+            entity: sensor.sun_solar_azimuth
+            name: Sun azimuth
+            min: 0
+            max: 360
+            needle: true
+            grid_options: {columns: 4, rows: 2}
+
           # ── Measured vs Met.no vs day-old prediction ─────────────
           # Series plumbing lives in packages/weather_temps.yaml (the
           # "predicted a day ago" SQL sensor only has data from 24 h
