@@ -36,6 +36,30 @@ ANOMALY_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Symmetric to ANOMALY_PATTERN above, but in the opposite direction: some
+# conditions are already fully explained and explicitly labeled benign by the
+# fetch layer (see fetch_immich_log._summarize_postgres_log), yet the local
+# 3B model has repeatedly still narrated them as alarming ("impacting asset
+# processing tasks") and assigned "warn" on its own -- confirmed via
+# alert_log.jsonl, 7 real pages 2026-09-08/09, every one with
+# floors["immich"]=="none" (the deterministic checks correctly saw nothing
+# wrong). ANOMALY_PATTERN alone doesn't stop this: it checks the *entire*
+# combined report for corroboration, so an unrelated keyword anywhere else
+# (host/vm100/vm101/self) can "corroborate" a narrative that has nothing to
+# do with that other section. Rather than try to make that global check
+# airtight against cross-section leakage, name this specific known-benign
+# narrative and refuse to let it drive severity, independent of whether
+# something else happens to corroborate it.
+KNOWN_BENIGN_NARRATIVES = [
+    # Immich duplicate-checksum rejections during asset (re-)insertion.
+    re.compile(r"duplicate.{0,25}key.{0,50}(postgres|immich)", re.IGNORECASE),
+    re.compile(r"(postgres|immich).{0,50}duplicate.{0,25}key", re.IGNORECASE),
+]
+
+
+def _is_known_benign_narrative(summary: str) -> bool:
+    return any(p.search(summary) for p in KNOWN_BENIGN_NARRATIVES)
+
 # A genuinely unresolved problem (e.g. a real backup failure) shouldn't page
 # every single 20-min cycle forever -- re-remind at most this often per
 # distinct condition, tracked in STATE_FILE across runs.
@@ -102,6 +126,10 @@ def main():
 
     if SEVERITY_ORDER.index(llm_severity) > SEVERITY_ORDER.index(hard_floor) and not ANOMALY_PATTERN.search(report):
         llm_summary = f"(capped: no corroborating evidence in raw data for '{llm_severity}') {llm_summary}"
+        llm_severity = hard_floor
+
+    if immich_floor == "none" and _is_known_benign_narrative(llm_summary):
+        llm_summary = f"(capped: known-benign Immich duplicate-checksum narrative) {llm_summary}"
         llm_severity = hard_floor
 
     severity = max(llm_severity, hard_floor, key=SEVERITY_ORDER.index)
