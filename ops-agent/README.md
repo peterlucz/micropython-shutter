@@ -264,7 +264,7 @@ delay vs. the instant native alert PVE would otherwise send on failure.
 ## Notifications
 
 Reuses the existing PVE `ha-webhook` notification target
-(`http://192.168.1.5:8123/api/webhook/proxmox_alert_wylku5g6`) that already
+(`http://10.30.0.100:8123/api/webhook/proxmox_alert_wylku5g6`) that already
 feeds `automation.proxmox_alert` -> `notify.mobile_app_iphone_peterl`. This
 was a deliberate choice: ops-agent alerts land in the same "proxmox" phone
 notification group as PVE's own native alerts, rather than a separate
@@ -276,7 +276,7 @@ not in HA.
 `webhook_url` is gitignored (same convention as `homeassistant/token`) —
 recreate it locally if you're re-cloning:
 ```
-echo "http://192.168.1.5:8123/api/webhook/proxmox_alert_wylku5g6" > webhook_url
+echo "http://10.30.0.100:8123/api/webhook/proxmox_alert_wylku5g6" > webhook_url
 ```
 
 ### Notification content + throttling (fixed 2026-08-26, after an alert storm)
