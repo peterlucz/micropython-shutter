@@ -65,7 +65,7 @@ All topics are prefixed with the MAC-derived `{device_id}` (e.g. `pico_relay_ab1
 
 ### `config.py` — deployment parameters
 ```python
-MQTT_SERVER      = '192.168.1.5'   # MQTT broker IP
+MQTT_SERVER      = '10.30.0.100'   # MQTT broker IP
 DEVICES_FILE     = 'devices.json'  # config file on Pico flash
 DISCOVERY_PREFIX = 'homeassistant' # HA MQTT discovery prefix
 KEEPALIVE        = 120
@@ -118,14 +118,14 @@ mpremote
 
 Subscribe to all MQTT traffic in another:
 ```bash
-mosquitto_sub -h 192.168.1.5 -t '#' -v
+mosquitto_sub -h 10.30.0.100 -t '#' -v
 ```
 
 Send test commands:
 ```bash
-mosquitto_pub -h 192.168.1.5 -t pico_relay_ab12cd/shutter/0/set_position -m 50
-mosquitto_pub -h 192.168.1.5 -t pico_relay_ab12cd/shutter/0/set -m STOP
-mosquitto_pub -h 192.168.1.5 -t pico_relay_ab12cd/switch/1/set -m ON
+mosquitto_pub -h 10.30.0.100 -t pico_relay_ab12cd/shutter/0/set_position -m 50
+mosquitto_pub -h 10.30.0.100 -t pico_relay_ab12cd/shutter/0/set -m STOP
+mosquitto_pub -h 10.30.0.100 -t pico_relay_ab12cd/switch/1/set -m ON
 ```
 
 ### Home Assistant setup

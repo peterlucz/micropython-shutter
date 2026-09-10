@@ -1,4 +1,4 @@
-MQTT_SERVER      = '192.168.1.5'
+MQTT_SERVER      = '10.30.0.100'
 # Status + config topics are derived from the MAC-based DEVICE_ID in main.py
 # ('{DEVICE_ID}/status', '{DEVICE_ID}/config') so multiple boards can coexist.
 DEVICES_FILE     = 'devices.json'
