@@ -23,7 +23,7 @@ Usage:
         --automations shutters_update_daily_temps        # subset by id
   ./deploy_ha.py packages/shutters.yaml --delete ...     # remove them
 
-Host/token default to 192.168.1.5:8123 and the ./token file next to this script.
+Host/token default to 10.30.0.100:8123 and the ./token file next to this script.
 """
 import argparse, json, sys, urllib.error, urllib.request
 
@@ -137,7 +137,7 @@ def delete_script(rest, oid, dry):
 def main():
     ap = argparse.ArgumentParser(description="Deploy an HA package YAML via the API.")
     ap.add_argument("package", help="path to the package YAML")
-    ap.add_argument("--host", default="192.168.1.5")
+    ap.add_argument("--host", default="10.30.0.100")
     ap.add_argument("--port", type=int, default=8123)
     ap.add_argument("--token", default=None, help="path to token file (default ./token)")
     ap.add_argument("--delete", action="store_true", help="remove the entities instead of deploying")

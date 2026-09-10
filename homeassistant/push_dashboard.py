@@ -11,7 +11,7 @@ import yaml
 
 from ha_ws import WS, load_token
 
-HOST, PORT = "192.168.1.5", 8123
+HOST, PORT = "10.30.0.100", 8123
 
 
 def main():
