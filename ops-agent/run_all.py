@@ -46,19 +46,21 @@ ANOMALY_PATTERN = re.compile(
 # wrong). ANOMALY_PATTERN alone doesn't stop this: it checks the *entire*
 # combined report for corroboration, so an unrelated keyword anywhere else
 # (host/vm100/vm101/self) can "corroborate" a narrative that has nothing to
-# do with that other section. Rather than try to make that global check
-# airtight against cross-section leakage, name this specific known-benign
-# narrative and refuse to let it drive severity, independent of whether
-# something else happens to corroborate it.
-KNOWN_BENIGN_NARRATIVES = [
-    # Immich duplicate-checksum rejections during asset (re-)insertion.
-    re.compile(r"duplicate.{0,25}key.{0,50}(postgres|immich)", re.IGNORECASE),
-    re.compile(r"(postgres|immich).{0,50}duplicate.{0,25}key", re.IGNORECASE),
-]
-
-
-def _is_known_benign_narrative(summary: str) -> bool:
-    return any(p.search(summary) for p in KNOWN_BENIGN_NARRATIVES)
+# do with that other section.
+#
+# ORIGINALLY this was a regex matched against the LLM's own summary text
+# (name the narrative, refuse to let it drive severity). Retired 2026-09-11:
+# alert_log.jsonl showed multiple "warn" pages with cloud_verdict="confirmed"
+# for this exact already-explained condition (immich_floor=="none" the whole
+# time) -- the regex was checked against wording that varies both by local-
+# model phrasing AND by the cloud-verification rewrite (see verify_with_cloud
+# .py, which replaces `summary` with its own text on confirm), so it could
+# and did miss real instances. `fetch_immich_log.fetch()` now returns a plain
+# boolean (`immich_known_benign`) from the one place that actually knows the
+# ground truth, checked below -- robust to any amount of downstream
+# rewording, and (since it's applied before severity even reaches
+# ALERT_LEVELS) skips the cloud-verification call entirely for this
+# condition rather than hoping to catch it after the fact.
 
 # A genuinely unresolved problem (e.g. a real backup failure) shouldn't page
 # every single 20-min cycle forever -- re-remind at most this often per
@@ -109,7 +111,7 @@ def main():
     print(f"[{now}] ops-triage run starting")
 
     host_text, host_floor, host_reason = fetch_proxmox_log.fetch()
-    immich_text, immich_floor, immich_reason = fetch_immich_log.fetch()
+    immich_text, immich_floor, immich_reason, immich_known_benign = fetch_immich_log.fetch()
     vm100_text, vm100_floor, vm100_reason = fetch_vm_log.fetch("100", "HAOS", "/mnt/data")
     vm101_text, vm101_floor, vm101_reason = fetch_vm_log.fetch("101", "Desktop")
     self_text, self_floor, self_reason = fetch_self_log.fetch()
@@ -128,7 +130,7 @@ def main():
         llm_summary = f"(capped: no corroborating evidence in raw data for '{llm_severity}') {llm_summary}"
         llm_severity = hard_floor
 
-    if immich_floor == "none" and _is_known_benign_narrative(llm_summary):
+    if immich_known_benign and immich_floor == "none":
         llm_summary = f"(capped: known-benign Immich duplicate-checksum narrative) {llm_summary}"
         llm_severity = hard_floor
 

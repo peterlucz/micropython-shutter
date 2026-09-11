@@ -40,7 +40,45 @@ def _summarize_redis_log(raw_log: str) -> str:
     return raw_log
 
 
-def _summarize_postgres_log(raw_log: str) -> str:
+def _summarize_if_clean(raw_log: str, name: str) -> str:
+    """Collapse a container's log window to a deterministic one-liner when it
+    contains no anomaly-indicating line at all. Unlike the redis/postgres
+    summarizers above, this isn't reinterpreting one specific known-benign
+    error -- it's just removing INFO-level noise so there's nothing left for
+    the LLM to invent an unrelated claim *about*.
+
+    Found 2026-09-11: the local 3B model fabricated "incomplete JPEG scans
+    and premature end of JPEG images" for immich_server's log window when
+    the real 30-min fetch had zero matching lines (confirmed after the fact:
+    zero 'jpeg'/'premature'/'corrupt' hits across a full 48h of actual
+    immich_server logs, container uptime 7 days, no restart). Worse, the
+    cloud-verification step (verify_with_cloud.py) also "confirmed" it --
+    its prompt asks the cloud model to find supporting text in the raw
+    report, but a container's log tail can be long enough, and phrased
+    plausibly-Immich-adjacent enough, that a cheap model still pattern-
+    matches its way to agreement rather than actually checking. This isn't
+    a specific-error case like the postgres/redis ones above (there's no
+    single known pattern to name), so the fix is generic: if literally
+    nothing anomaly-shaped is in the window, say so in one deterministic
+    sentence instead of handing the model 50 lines of ordinary INFO output
+    to draw its own conclusions from."""
+    if raw_log.startswith("(") or raw_log == "(no output)":
+        return raw_log
+    anomalies = [
+        line for line in raw_log.splitlines()
+        if re.search(
+            r"error|fail(?:ed|ing)?|exception|warn|corrupt(?:ed)?|premature|panic|denied|refused|"
+            r"timed? ?out",
+            line, re.IGNORECASE,
+        )
+    ]
+    if anomalies:
+        return f"Anomalies found in {name} log:\n" + "\n".join(anomalies[-10:])
+    n = len(raw_log.splitlines())
+    return f"{n} routine log line(s) for {name} in the last 30 min, no errors/warnings found."
+
+
+def _summarize_postgres_log(raw_log: str) -> tuple:
     # UQ_assets_owner_checksum fires only when a client tries to (re-)insert
     # an asset whose content checksum already exists for that owner -- by
     # definition this can only mean "already backed up", never data loss or
@@ -55,8 +93,22 @@ def _summarize_postgres_log(raw_log: str) -> str:
     # through, so there's nothing that reads as "new" for the model to
     # misjudge. Other Postgres errors (an actual constraint we don't
     # recognize, connection issues, etc.) still pass through raw.
+    #
+    # Second `is_known_benign` return value added 2026-09-11: the original
+    # design relied on the LLM's own final summary text still describing
+    # this recognizably enough for a downstream regex to catch and re-cap
+    # (see run_all.py's old KNOWN_BENIGN_NARRATIVES) -- in practice the local
+    # model's wording varies enough, and the cloud-verification step's
+    # wording varies more, that the regex missed real instances (confirmed
+    # via alert_log.jsonl: several "warn" pages went out, cloud_verdict=
+    # "confirmed", for this exact already-explained condition with
+    # immich_floor=="none" throughout). A plain boolean from the one place
+    # that actually knows the ground truth is robust to any amount of
+    # downstream rewording; run_all.py uses it to cap severity *before*
+    # ever reaching the cloud-verification call, rather than hoping to catch
+    # it after the fact.
     if raw_log.startswith("(") or raw_log == "(no output)":
-        return raw_log
+        return raw_log, False
     dup_checksum = re.findall(
         r'duplicate key value violates unique constraint "UQ_assets_owner_checksum"', raw_log,
     )
@@ -69,11 +121,12 @@ def _summarize_postgres_log(raw_log: str) -> str:
         return (
             f"{len(dup_checksum)} duplicate-checksum rejection(s) on asset inserts in the last 30 min "
             "-- a client re-uploading content it has already backed up successfully; Immich's DB "
-            "correctly rejects these, no data loss or corruption. Known benign pattern, not actionable."
+            "correctly rejects these, no data loss or corruption. Known benign pattern, not actionable.",
+            True,
         )
     if other_errors:
-        return "Anomalies found in postgres log:\n" + "\n".join(other_errors[-10:])
-    return raw_log
+        return "Anomalies found in postgres log:\n" + "\n".join(other_errors[-10:]), False
+    return raw_log, False
 
 
 def container_floor(ps_text: str) -> str:
@@ -160,12 +213,16 @@ def fetch():
     mem = host_metrics.guest_exec(VMID, "free", "-m")
 
     logs = []
+    known_benign = False
     for name in CONTAINERS:
         out = host_metrics.guest_exec(VMID, "docker", "logs", "--since", "30m", "--tail", "50", name)
         if name == "immich_redis":
             out = _summarize_redis_log(out)
         elif name == "immich_postgres":
-            out = _summarize_postgres_log(out)
+            out, benign = _summarize_postgres_log(out)
+            known_benign = known_benign or benign
+        elif name in ("immich_server", "immich_machine_learning"):
+            out = _summarize_if_clean(out, name)
         logs.append(f"--- {name} ---\n{out}")
 
     ml_urls = _get_ml_urls()
@@ -208,10 +265,10 @@ def fetch():
         photo_reason,
         ml_reason,
     ) if r)
-    return text, floor, reason
+    return text, floor, reason, known_benign
 
 
 if __name__ == "__main__":
-    report_text, floor, reason = fetch()
+    report_text, floor, reason, benign = fetch()
     print(report_text)
-    print(f"\n(combined floor: {floor}; reason: {reason or '(none)'})")
+    print(f"\n(combined floor: {floor}; reason: {reason or '(none)'}; known_benign: {benign})")

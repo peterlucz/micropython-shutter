@@ -24,16 +24,37 @@ def guest_exec(vmid, *args):
     """Run a command inside a VM via the QEMU guest agent (ssh proxmox -> qm
     guest exec). Builds one pre-quoted remote command string -- ssh naively
     space-joins multiple trailing argv elements with no quoting, which
-    mangles anything with spaces/braces/tabs before qm/the guest ever see it."""
+    mangles anything with spaces/braces/tabs before qm/the guest ever see it.
+
+    Fixed 2026-09-11: used to treat *any* non-empty `err-data` as proof the
+    call failed, discarding `out-data` entirely and returning an opaque
+    "(guest exec error...)" wrapper instead. That's wrong for a command like
+    `docker logs`, which mirrors each line to the *container's own* stdout
+    or stderr -- Postgres logs its ERROR/DETAIL/STATEMENT lines to stderr by
+    default, so ordinary, successful `docker logs immich_postgres` calls
+    (`exitcode: 0`) came back with the real log content entirely on
+    `err-data` and got replaced by the error wrapper on every single fetch.
+    Confirmed live: a duplicate-checksum rejection burst that should have
+    been caught and collapsed by fetch_immich_log's own summarizer instead
+    reached it pre-wrapped in "(guest exec error, exitcode=0: ...)", so the
+    summarizer's `raw_log.startswith("(")` early-out fired and passed the
+    raw, alarming-looking text straight through untouched -- every cycle,
+    regardless of any downstream capping logic. `exitcode` (the guest
+    process's actual return status) is the real signal for failure, not
+    whether anything landed on stderr."""
     remote_cmd = f"qm guest exec {vmid} -- " + " ".join(shlex.quote(a) for a in args)
     result = subprocess.run(["ssh", SSH_HOST, remote_cmd], capture_output=True, text=True, timeout=30)
     try:
         parsed = json.loads(result.stdout)
     except json.JSONDecodeError:
         return f"(guest exec failed: {result.stdout or result.stderr})"
-    if parsed.get("err-data"):
-        return f"(guest exec error, exitcode={parsed.get('exitcode')}: {parsed['err-data'].strip()})"
-    return parsed.get("out-data", "").strip() or "(no output)"
+    exitcode = parsed.get("exitcode")
+    out_data = parsed.get("out-data", "") or ""
+    err_data = parsed.get("err-data", "") or ""
+    if exitcode:  # nonzero (or a non-numeric failure marker) -> genuinely failed
+        return f"(guest exec error, exitcode={exitcode}: {(err_data or out_data).strip()})"
+    combined = "\n".join(s.strip() for s in (out_data, err_data) if s.strip())
+    return combined or "(no output)"
 
 
 def run_local(*args):
