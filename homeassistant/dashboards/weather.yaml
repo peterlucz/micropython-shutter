@@ -52,12 +52,17 @@ views:
           - type: entities
             title: Sunrise / sunset
             entities:
+              # timestamp sensors default to relative display ("in 8
+              # hours") in an entities row; `format: time` renders the
+              # actual HH:MM instead (entities-row option, HA 2024.5+)
               - entity: sensor.sun_next_rising
                 name: Sunrise
                 icon: mdi:weather-sunset-up
+                format: time
               - entity: sensor.sun_next_setting
                 name: Sunset
                 icon: mdi:weather-sunset-down
+                format: time
           - type: gauge
             entity: sensor.sun_solar_elevation
             name: Sun elevation
@@ -68,13 +73,24 @@ views:
               - {from: -90, color: "#37474f"}
               - {from: 0, color: "#4caf50"}
               - {from: 90, color: "#ffca28"}
-            grid_options: {columns: 4, rows: 2}
+            grid_options: {columns: 3, rows: 2}
           - type: gauge
             entity: sensor.sun_solar_azimuth
             name: Sun azimuth
             min: 0
             max: 360
             needle: true
+            grid_options: {columns: 3, rows: 2}
+          # Moon integration wasn't set up on this instance either (same
+          # situation as the sun diagnostic sensors above) -- added via
+          # POST /api/config/config_entries/flow {handler: moon}, 2026-09-15.
+          # It creates sensor.moon_phase (device_class enum), not moon.moon.
+          # Elevation/azimuth narrowed to columns:3 (from 4) so this tile
+          # fits in the same row instead of wrapping -- arranged by hand
+          # in the dashboard UI, then folded back into this file.
+          - type: tile
+            entity: sensor.moon_phase
+            name: Moon phase
             grid_options: {columns: 4, rows: 2}
 
           # ── Measured vs Met.no vs day-old prediction ─────────────
