@@ -1,58 +1,164 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Living room Kodi power follows the TV
+# Living room Kodi power — zigbee button, no TV dependency
 #
 # Deploy:  python3 deploy_ha.py packages/livingroom_kodi.yaml
 #
-# The living room Raspberry Pi (LibreELEC, media_player.kodi_nappali) is
-# powered by inside-socket-2. It should be running exactly while the TV
-# (media_player.samsung_q60ba_55_tv_2) is on:
+# Replaces the previous TV-follows design (which triggered off
+# media_player.samsung_q60ba_55_tv). Retired 2026-09-14: both the native
+# `samsungtv` remote-control pairing and the older, previously-working
+# `dlna_dmr` integration (which had genuinely worked since 2025-12-13, until
+# the TV's IP changed in this year's VLAN reorg and the config entry kept
+# the stale 192.168.1.157 address) turned out to be stuck rejecting HA
+# (ms.channel.timeOut / UPnP 401 Unauthorized) even after fixing every
+# legitimate TV-side setting found (Access Notification, Device Connection
+# Manager Allow, IP Remote, full power-cycle, fixing the stale IP itself).
+# Looks like a TV firmware bug, not fixable from the HA side -- see
+# [[home-network-devices]]/session notes. Dropped the TV dependency entirely
+# in favor of a physical zigbee button, same idea as the bedroom sibling
+# (packages/bedroom_kodi.yaml), which never depended on a TV at all.
 #
-#   - TV on  -> socket on, LibreELEC boots by itself on power.
-#   - TV off for 1 min -> ask Kodi for a clean OS shutdown first
-#     (kodi.call_method System.Shutdown), wait until its JSON-RPC drops
-#     (Kodi entity -> unavailable/off, max 45 s), give the OS 15 s more to
-#     halt, then cut the socket. The 1-minute hold ignores brief TV
-#     off/on blips.
+# inside-button-2 (Aqara/Xiaomi WXKG01LM Mi wireless switch -- identified
+# live 2026-09-14 by having Peter press it and watching
+# zigbee2mqtt/+/action; needed a physical repair mid-session, battery
+# reads 100% but the unit itself was flaky beforehand):
+#   - single click  -> socket on, LibreELEC boots by itself on power.
+#   - double click  -> ask Kodi for a clean OS shutdown, wait for its
+#     JSON-RPC to drop (unavailable/off, max 45s), give the OS 15s more to
+#     halt, then cut the socket. continue_on_error/timeout: even if Kodi's
+#     already dead/unreachable, the socket still gets cut.
 #
-# The shutdown call is continue_on_error: if Kodi is already dead the
-# socket still gets switched off. Known edge case (accepted): turning the
-# TV back on during the ~1 min shutdown sequence won't reboot the Pi —
-# the socket-off still completes, and the TV-on trigger has already
-# fired. Toggle the TV off and on again (or the socket from HA) to boot.
+# Also added: an idle-at-night auto-off, same shape as the Prusa
+# "At night" automation (automation.socket_prusa_core_one_at_night) -- if
+# Kodi is on but sits idle/paused for 30 min between 22:00-06:00, shut it
+# down the same graceful way. Window is a starting guess, easy to adjust.
+# The fixed 22:00 time trigger backstops the case where Kodi was *already*
+# idle before the window opened -- a `for:` state trigger only fires once,
+# at the moment the duration is first satisfied, so it wouldn't re-fire
+# once the window opens if the idle period started earlier (same gotcha
+# the Prusa automation's own midnight trigger solves).
 #
-# Same idea as the bedroom pair "Socket:Bedroom:Kodi:On/Off" (UI-managed),
-# but with a graceful shutdown instead of just cutting power.
+# binary_sensor.livingroom_kodi_pi_reachable (HA "Ping (ICMP)" against
+# 10.20.0.40, added 2026-09-14 alongside this rewrite) isn't used by either
+# automation below -- Kodi's own media_player state is a faster, more
+# direct signal for both triggers here, same reasoning as the bedroom
+# design. Kept around as a spare diagnostic/building block, not dead
+# weight to remove.
+#
+# Quiet-hours window and idle-before-shutdown duration are now dashboard-
+# tunable helpers (2026-09-21) instead of hardcoded 22:00/06:00/30min --
+# kept independent from the bedroom sibling's own copies, deliberately, so
+# each room can be tuned separately.
 # ─────────────────────────────────────────────────────────────────────────────
 
+input_datetime:
+  livingroom_kodi_quiet_start:
+    name: "Living room Kodi — quiet hours start"   # live: 22:00
+    has_time: true
+    has_date: false
+    icon: mdi:weather-night
+
+  livingroom_kodi_quiet_end:
+    name: "Living room Kodi — quiet hours end"   # live: 06:00
+    has_time: true
+    has_date: false
+    icon: mdi:weather-sunset-up
+
+input_number:
+  livingroom_kodi_idle_minutes:
+    name: "Living room Kodi — idle before shutdown"   # live: 30
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: "min"
+    icon: mdi:timer-outline
+    mode: box
+
 automation:
-  - id: livingroom_kodi_on
-    alias: "Socket:Livingroom:Kodi:On"
-    description: "Powers the living room Kodi Pi socket when the TV turns on"
+  - id: livingroom_kodi_button
+    alias: "Socket:Livingroom:Kodi:Button"
+    description: >-
+      Single click on inside-button-2 powers on the living room Kodi Pi.
+      Double click asks Kodi to shut down cleanly, then cuts the socket.
     triggers:
-      - trigger: state
-        entity_id: media_player.samsung_q60ba_55_tv_2
-        to: "on"
-    conditions:
-      - condition: state
-        entity_id: switch.inside_socket_2
-        state: "off"
+      - trigger: device
+        domain: mqtt
+        device_id: d64981261890841c05b7ae535eda9715   # inside-button-2
+        type: action
+        subtype: single
+        id: "single"
+      - trigger: device
+        domain: mqtt
+        device_id: d64981261890841c05b7ae535eda9715   # inside-button-2
+        type: action
+        subtype: double
+        id: "double"
     actions:
-      - action: switch.turn_on
-        target:
-          entity_id: switch.inside_socket_2
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: "single"
+              - condition: state
+                entity_id: switch.inside_socket_2
+                state: "off"
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.inside_socket_2
+          - conditions:
+              - condition: trigger
+                id: "double"
+              - condition: state
+                entity_id: switch.inside_socket_2
+                state: "on"
+            sequence:
+              - action: kodi.call_method
+                target:
+                  entity_id: media_player.kodi_nappali
+                data:
+                  method: System.Shutdown
+                continue_on_error: true
+              - wait_for_trigger:
+                  - trigger: state
+                    entity_id: media_player.kodi_nappali
+                    to: "unavailable"
+                  - trigger: state
+                    entity_id: media_player.kodi_nappali
+                    to: "off"
+                timeout: "00:00:45"
+                continue_on_timeout: true
+              - delay:
+                  seconds: 15
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.inside_socket_2
     mode: single
 
-  - id: livingroom_kodi_off
-    alias: "Socket:Livingroom:Kodi:Off"
+  - id: livingroom_kodi_idle_night
+    alias: "Socket:Livingroom:Kodi:At night"
     description: >-
-      Shuts LibreELEC down cleanly and then cuts the living room Kodi
-      socket once the TV has been off for a minute.
+      If Kodi is on but idle/paused for 30 min between 22:00-06:00, shuts
+      it down cleanly and cuts the socket -- same idea as
+      automation.socket_prusa_core_one_at_night.
     triggers:
       - trigger: state
-        entity_id: media_player.samsung_q60ba_55_tv_2
-        to: "off"
-        for: "00:01:00"
+        entity_id: media_player.kodi_nappali
+        to: idle
+        for: "{{ '00:%02d:00' | format(states('input_number.livingroom_kodi_idle_minutes')|int(30)) }}"
+      - trigger: state
+        entity_id: media_player.kodi_nappali
+        to: paused
+        for: "{{ '00:%02d:00' | format(states('input_number.livingroom_kodi_idle_minutes')|int(30)) }}"
+      - trigger: time
+        at: input_datetime.livingroom_kodi_quiet_start
     conditions:
+      - condition: time
+        after: input_datetime.livingroom_kodi_quiet_start
+        before: input_datetime.livingroom_kodi_quiet_end
+      - condition: state
+        entity_id: media_player.kodi_nappali
+        state:
+          - idle
+          - paused
       - condition: state
         entity_id: switch.inside_socket_2
         state: "on"

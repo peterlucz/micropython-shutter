@@ -64,7 +64,35 @@
 # 2026-07-18), which could cut power to a live Pi and whose buttons only
 # powered on. Living-room sibling: packages/livingroom_kodi.yaml (TV
 # state instead of buttons).
+#
+# Quiet-hours window and idle-before-shutdown duration are now dashboard-
+# tunable helpers (2026-09-21) instead of hardcoded 22:00/06:00/30min --
+# kept independent from the living-room sibling's own copies, deliberately,
+# so each room can be tuned separately.
 # ─────────────────────────────────────────────────────────────────────────────
+
+input_datetime:
+  bedroom_kodi_quiet_start:
+    name: "Bedroom Kodi — quiet hours start"   # live: 22:00
+    has_time: true
+    has_date: false
+    icon: mdi:weather-night
+
+  bedroom_kodi_quiet_end:
+    name: "Bedroom Kodi — quiet hours end"   # live: 06:00
+    has_time: true
+    has_date: false
+    icon: mdi:weather-sunset-up
+
+input_number:
+  bedroom_kodi_idle_minutes:
+    name: "Bedroom Kodi — idle before shutdown"   # live: 30
+    min: 5
+    max: 120
+    step: 5
+    unit_of_measurement: "min"
+    icon: mdi:timer-outline
+    mode: box
 
 automation:
   - id: bedroom_kodi_button
@@ -188,4 +216,81 @@ automation:
                 - stop: "Pi unreachable on 3 consecutive checks, socket cut"
             - delay:
                 seconds: 10
+    mode: single
+
+  - id: bedroom_kodi_idle_night
+    alias: "Socket:Bedroom:Kodi:At night"
+    description: >-
+      If Kodi is on but idle/paused for 30 continuous min between
+      22:00-06:00, AND the Chromecast sharing this socket isn't active,
+      shuts Kodi down cleanly and cuts the socket. Same idea as
+      automation.socket_prusa_core_one_at_night and the living-room
+      sibling (automation.socket_livingroom_kodi_at_night).
+    triggers:
+      - trigger: state
+        entity_id: media_player.libreelec_halo
+        to: idle
+        for: "{{ '00:%02d:00' | format(states('input_number.bedroom_kodi_idle_minutes')|int(30)) }}"
+      - trigger: state
+        entity_id: media_player.libreelec_halo
+        to: paused
+        for: "{{ '00:%02d:00' | format(states('input_number.bedroom_kodi_idle_minutes')|int(30)) }}"
+      # Also re-check whenever the Chromecast itself goes idle/off -- Kodi
+      # may have already been sitting idle for 30+ min while the Chromecast
+      # was still in use, in which case the triggers above already fired
+      # once and were rejected by the Chromecast condition below; nothing
+      # about Kodi's own state changes again once the Chromecast finally
+      # stops, so without this it would never get a second chance to fire.
+      - trigger: state
+        entity_id: media_player.bedroom_tv
+        to: "off"
+      - trigger: state
+        entity_id: media_player.bedroom_tv
+        to: idle
+      - trigger: time
+        at: input_datetime.bedroom_kodi_quiet_start
+    conditions:
+      - condition: time
+        after: input_datetime.bedroom_kodi_quiet_start
+        before: input_datetime.bedroom_kodi_quiet_end
+      # Duration condition (not just current-state) so this is correct
+      # regardless of which trigger above actually fired.
+      - condition: state
+        entity_id: media_player.libreelec_halo
+        state:
+          - idle
+          - paused
+        for: "{{ '00:%02d:00' | format(states('input_number.bedroom_kodi_idle_minutes')|int(30)) }}"
+      # Chromecast just needs to be inactive *right now* -- no 30-min hold
+      # of its own, per Peter's ask: don't cut power while it's in use,
+      # regardless of how recently it became idle.
+      - condition: state
+        entity_id: media_player.bedroom_tv
+        state:
+          - "off"
+          - idle
+      - condition: state
+        entity_id: switch.inside_socket_3
+        state: "on"
+    actions:
+      - action: kodi.call_method
+        target:
+          entity_id: media_player.libreelec_halo
+        data:
+          method: System.Shutdown
+        continue_on_error: true
+      - wait_for_trigger:
+          - trigger: state
+            entity_id: media_player.libreelec_halo
+            to: "unavailable"
+          - trigger: state
+            entity_id: media_player.libreelec_halo
+            to: "off"
+        timeout: "00:00:45"
+        continue_on_timeout: true
+      - delay:
+          seconds: 15
+      - action: switch.turn_off
+        target:
+          entity_id: switch.inside_socket_3
     mode: single
