@@ -1,0 +1,111 @@
+# Study dashboard — badges for status, a clock, weather, the desk lamp
+# (dimmable/color-temp), the main room switch, the shutter with a reset
+# button, the Canon printer's ink levels, and the room speaker.
+#
+# Was UI-only until 2026-09-21 (built directly in the HA UI, like the
+# hallway automation before it) — migrated into git here as the reference
+# template for the other per-room dashboards (bedroom+living room, hanna,
+# tamara). Gotcha worth knowing: light.study_desk_lamp shows unavailable in
+# Zigbee whenever it's turned off at the physical switch (study-switch-1 is
+# the wall switch feeding it) rather than via HA/Zigbee — not a fault, just
+# how the wiring works. The room also has a Google Nest speaker/display,
+# not yet added as an HA entity/card here.
+#
+# Built-in cards only. Pushed to HA at /dashboard-study via push_dashboard.py.
+
+title: Study
+views:
+  - title: Home
+    path: home
+    badges:
+      - type: entity
+        entity: light.study_desk_lamp
+      - type: entity
+        entity: switch.study_switch_1
+      - type: entity
+        entity: sensor.canon_ts5100_series_black
+      - type: entity
+        entity: sensor.canon_ts5100_series_color
+      - type: entity
+        entity: cover.pico_relay_02efbe_shutter_0
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: heading
+            heading_style: subtitle
+
+          - type: clock
+            clock_style: analog
+            clock_size: medium
+            show_seconds: true
+            ticks: hour
+            face_style: markers
+            seconds_motion: continuous
+            grid_options: {columns: 6, rows: 4}
+
+          - type: weather-forecast
+            entity: weather.forecast_home
+            forecast_type: daily
+            show_current: true
+            show_forecast: true
+            grid_options: {columns: 6, rows: 4}
+
+          # ── Main switch + desk lamp ──────────────────────────────
+          - type: tile
+            entity: switch.study_switch_1
+            state_content: last_changed
+            features:
+              - type: toggle
+            features_position: bottom
+            grid_options: {columns: 6, rows: 3}
+
+          - type: tile
+            entity: light.study_desk_lamp
+            icon: mdi:desk-lamp
+            state_content:
+              - color_temp_kelvin
+              - brightness
+            features:
+              - type: light-brightness
+              - type: light-color-temp
+            features_position: bottom
+            grid_options: {columns: 6, rows: 3}
+
+          # ── Shutter ───────────────────────────────────────────────
+          - type: tile
+            entity: cover.pico_relay_02efbe_shutter_0
+            name: Shutter
+            color: green
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            icon_height: 24px
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efbe_shutter_0
+
+          # ── Printer ink ───────────────────────────────────────────
+          - type: tile
+            entity: sensor.canon_ts5100_series_black
+            features:
+              - type: bar-gauge
+            features_position: bottom
+          - type: tile
+            entity: sensor.canon_ts5100_series_color
+            features:
+              - type: bar-gauge
+            features_position: bottom
+
+          # ── Room speaker ──────────────────────────────────────────
+          - type: tile
+            entity: media_player.study_speaker
+            state_content: media_title
+            grid_options: {columns: 12, rows: 2}

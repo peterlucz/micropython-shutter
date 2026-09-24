@@ -1,0 +1,169 @@
+# Living room + Kitchen dashboard — two views (tabs) in one dashboard
+# (was Bedroom+Living room, re-paired with Kitchen instead 2026-09-21;
+# Bedroom is now its own standalone dashboard, dashboards/bedroom.yaml).
+# Same card patterns as the other room dashboards.
+#
+# Kitchen currently has just one entity registered (its shutter) — the tab
+# is intentionally minimal for now, ready to grow as more kitchen devices
+# get added.
+#
+# Built-in cards only. Pushed to HA at /dashboard-livingroom-kitchen via
+# push_dashboard.py.
+
+title: Living room & Kitchen
+views:
+  # ── Living room ────────────────────────────────────────────────────────
+  - title: Living room
+    path: living-room
+    icon: mdi:sofa
+    badges:
+      - type: entity
+        entity: switch.inside_socket_2
+      - type: entity
+        entity: sensor.inside_temp_2_temperature
+      - type: entity
+        entity: sensor.inside_temp_2_humidity
+      - type: entity
+        entity: cover.pico_relay_02efc0_shutter_2
+      - type: entity
+        entity: cover.pico_relay_02efc0_shutter_3
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Today
+            forecast_type: hourly
+            forecast_slots: 10
+            show_current: false
+            show_forecast: true
+            grid_options: {columns: 12, rows: 2}
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Next days
+            forecast_type: daily
+            show_current: false
+            show_forecast: true
+            grid_options: {columns: 12, rows: 3}
+
+          # ── Shutters ──────────────────────────────────────────────
+          - type: tile
+            entity: cover.pico_relay_02efc0_shutter_2
+            name: Shutter 2
+            color: green
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            icon_height: 24px
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efc0_shutter_2
+          - type: tile
+            entity: cover.pico_relay_02efc0_shutter_3
+            name: Shutter 3
+            color: green
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            icon_height: 24px
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efc0_shutter_3
+
+          # ── Kodi / Chromecasts / socket ──────────────────────────────
+          - type: tile
+            entity: switch.inside_socket_2
+            name: Kodi power
+            state_content:
+              - state
+              - last_changed
+            features:
+              - type: toggle
+            grid_options: {columns: 4, rows: 2}
+          - type: tile
+            entity: media_player.kodi_nappali
+            name: Kodi
+            state_content: media_title
+            grid_options: {columns: 4, rows: 2}
+          - type: tile
+            entity: media_player.living_room_display
+            name: Display
+            state_content: media_title
+            grid_options: {columns: 4, rows: 2}
+          - type: tile
+            entity: media_player.samsung_q60ba_55_tv
+            name: TV Chromecast
+            state_content: media_title
+            grid_options: {columns: 12, rows: 2}
+
+          # ── Room sensor ───────────────────────────────────────────
+          - type: tile
+            entity: sensor.inside_temp_2_temperature
+            name: Temperature
+            grid_options: {columns: 6, rows: 2}
+          - type: tile
+            entity: sensor.inside_temp_2_humidity
+            name: Humidity
+            grid_options: {columns: 6, rows: 2}
+
+  # ── Kitchen ────────────────────────────────────────────────────────────
+  - title: Kitchen
+    path: kitchen
+    icon: mdi:countertop
+    badges:
+      - type: entity
+        entity: cover.pico_relay_02efc0_shutter_1
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Today
+            forecast_type: hourly
+            forecast_slots: 10
+            show_current: false
+            show_forecast: true
+            grid_options: {columns: 12, rows: 2}
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Next days
+            forecast_type: daily
+            show_current: false
+            show_forecast: true
+            grid_options: {columns: 12, rows: 3}
+
+          # ── Shutter ───────────────────────────────────────────────
+          - type: tile
+            entity: cover.pico_relay_02efc0_shutter_1
+            name: Shutter
+            color: green
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            icon_height: 24px
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efc0_shutter_1

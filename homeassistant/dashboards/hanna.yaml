@@ -1,0 +1,125 @@
+# Hanna's room dashboard — same pattern as dashboards/study.yaml: badges,
+# weather (daily + hourly), shutters + reset buttons, the room lamp switch,
+# room air-quality sensor, and her wake-up light settings
+# (packages/kids_wakeup.yaml — workday/holiday times, tuned here or on the
+# Config dashboard, same helpers either way).
+#
+# Two shutters (pico_relay_02efbc_shutter_1, pico_relay_02efbe_shutter_2).
+# inside_temp_4 (temp/humidity) was moved out to Tamara's room 2026-09-22 —
+# Hanna already has her own full sensor (inside_air_1: temp/humidity/PM2.5/
+# VOC), so it wasn't needed here.
+#
+# Built-in cards only. Pushed to HA at /dashboard-hanna via push_dashboard.py.
+
+title: Hanna
+views:
+  - title: Hanna
+    path: hanna
+    icon: mdi:human-female-girl
+    badges:
+      - type: entity
+        entity: switch.hanna_switch_1
+      - type: entity
+        entity: sensor.inside_air_1_temperature
+      - type: entity
+        entity: sensor.inside_air_1_humidity
+      - type: entity
+        entity: cover.pico_relay_02efbc_shutter_1
+      - type: entity
+        entity: cover.pico_relay_02efbe_shutter_2
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Today
+            forecast_type: hourly
+            forecast_slots: 10
+            show_current: false
+            show_forecast: true
+            grid_options: {columns: 12, rows: 2}
+          - type: weather-forecast
+            entity: weather.forecast_home
+            name: Next days
+            forecast_type: daily
+            show_current: false
+            show_forecast: true
+            grid_options: {columns: 12, rows: 3}
+
+          # ── Shutters ──────────────────────────────────────────────
+          - type: tile
+            entity: cover.pico_relay_02efbc_shutter_1
+            name: Shutter 1
+            color: green
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            icon_height: 24px
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efbc_shutter_1
+          - type: tile
+            entity: cover.pico_relay_02efbe_shutter_2
+            name: Shutter 2
+            color: green
+            features:
+              - type: cover-position
+            grid_options: {columns: 8, rows: 2}
+          - type: button
+            name: Reset
+            icon: mdi:restore
+            icon_height: 24px
+            grid_options: {columns: 4, rows: 2}
+            tap_action:
+              action: perform-action
+              perform_action: script.shutter_reset
+              data:
+                targets:
+                  - cover.pico_relay_02efbe_shutter_2
+
+          # ── Lamp ──────────────────────────────────────────────────
+          - type: tile
+            entity: switch.hanna_switch_1
+            name: Lamp
+            state_content:
+              - state
+              - last_changed
+            features:
+              - type: toggle
+            grid_options: {columns: 12, rows: 2}
+
+          # ── Room sensors ──────────────────────────────────────────
+          - type: tile
+            entity: sensor.inside_air_1_temperature
+            name: Temperature
+            grid_options: {columns: 3, rows: 2}
+          - type: tile
+            entity: sensor.inside_air_1_humidity
+            name: Humidity
+            grid_options: {columns: 3, rows: 2}
+          - type: tile
+            entity: sensor.inside_air_1_pm25
+            name: PM2.5
+            grid_options: {columns: 3, rows: 2}
+          - type: tile
+            entity: sensor.inside_air_1_voc_index
+            name: VOC index
+            grid_options: {columns: 3, rows: 2}
+
+          # ── Wake-up light ─────────────────────────────────────────
+          - type: heading
+            heading: Wake-up light
+            icon: mdi:alarm
+          - type: entities
+            entities:
+              - input_datetime.hanna_wakeup_workday
+              - input_datetime.hanna_wakeup_holiday
+              - input_number.hanna_holiday_days_left
