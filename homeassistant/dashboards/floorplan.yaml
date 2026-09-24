@@ -1,0 +1,104 @@
+# Floor plan dashboard — live sensors/switches overlaid on the actual house
+# floor plan (picture-elements cards, built-in HA, no HACS needed).
+#
+# Background images: cropped from the final architect plans (Peter provided
+# 2026-09-22, superseding an earlier draft PDF — the final version made
+# both flats in this duplex symmetric, room sizes changed from the draft).
+# Uploaded via HA's built-in image-upload API (POST /api/image/upload) since
+# this instance has no file/SSH access to drop files into www/local. Source
+# crops kept in this repo aren't practical (large architect-scale originals);
+# re-derive from Downloads/alaprajz {fsz,em} v01.jpg if these ever need
+# re-cropping (ground floor: bottom flat, offset ~+99+1790 1030px tall;
+# upper floor: bottom flat, offset ~+99+1726 1021px tall, out of the
+# 4961x3508 originals).
+#
+# Room mapping confirmed with Peter 2026-09-22: upstairs 13.29m² (leftmost,
+# own balcony) = bedroom; 11.83m² = Hanna; 11.66m² = Tamara (reading left
+# to right, matches "left=Hanna, right=Tamara"). Downstairs 10.53m² SZOBA
+# near Előszoba = study (matches cover.pico_relay_02efbe_shutter_0).
+#
+# Element positions below are a first-pass estimate from the image layout,
+# not pixel-precise — fine-tune by dragging elements in HA's own
+# picture-elements visual editor (Edit Dashboard -> click a card -> the
+# elements are draggable directly on the image), which is far more
+# accurate than guessing percentages blind. This file won't reflect
+# manual drag adjustments until someone reads them back from the live
+# config and updates it here (same pattern as every other dashboard in
+# this repo).
+#
+# Built-in cards only. Pushed to HA at /dashboard-floorplan via
+# push_dashboard.py.
+
+title: Floor plan
+views:
+  # ── Ground floor ─────────────────────────────────────────────────────
+  - title: Ground floor
+    path: ground
+    icon: mdi:floor-plan
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: picture-elements
+            image: /api/image/serve/5ab42ef00fdc5cbdc0867c42fe80cad2/original
+            grid_options: {columns: 12, rows: 10}
+            elements:
+              # Living room
+              - type: state-icon
+                entity: switch.inside_socket_2
+                style: {top: "36%", left: "20%"}
+              - type: state-label
+                entity: sensor.inside_temp_2_temperature
+                style: {top: "44%", left: "20%"}
+
+              # Study
+              - type: state-icon
+                entity: light.study_desk_lamp
+                style: {top: "36%", left: "67%"}
+              - type: state-icon
+                entity: switch.study_switch_1
+                style: {top: "44%", left: "67%"}
+              - type: state-icon
+                entity: cover.pico_relay_02efbe_shutter_0
+                style: {top: "52%", left: "67%"}
+
+              # Hallway (downstairs corridor near Előszoba)
+              - type: state-icon
+                entity: binary_sensor.hallway_motion_sensors
+                style: {top: "53%", left: "57%"}
+              - type: state-icon
+                entity: light.all_hallway_lights
+                style: {top: "45%", left: "57%"}
+
+  # ── Upper floor ───────────────────────────────────────────────────────
+  - title: Upper floor
+    path: upper
+    icon: mdi:floor-plan
+    type: sections
+    sections:
+      - type: grid
+        cards:
+          - type: picture-elements
+            image: /api/image/serve/e3d281e32d9373cdd69acb8c3cd4a801/original
+            grid_options: {columns: 12, rows: 10}
+            elements:
+              # Bedroom (13.29 m², leftmost)
+              - type: state-icon
+                entity: switch.inside_socket_3
+                style: {top: "27%", left: "17%"}
+              - type: state-label
+                entity: sensor.inside_temp_1_temperature
+                style: {top: "34%", left: "17%"}
+
+              # Hanna (11.83 m², middle-left)
+              - type: state-icon
+                entity: switch.hanna_switch_1
+                style: {top: "56%", left: "51%"}
+              - type: state-label
+                entity: sensor.inside_air_1_temperature
+                style: {top: "63%", left: "51%"}
+
+              # Tamara (11.66 m², middle-right)
+              - type: state-icon
+                entity: switch.tamara_switch_1
+                style: {top: "56%", left: "66%"}
