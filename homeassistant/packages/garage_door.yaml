@@ -30,6 +30,37 @@
 # single click added 2026-07-18 once the buttons had earned trust.) The
 # Zigbee2MQTT buttons expose clicks only as MQTT device triggers, hence the
 # device_ids.
+#
+# garage-vibration-1 (mounted on the door itself, renamed from
+# inside-vibration-1 2026-09-24) is used two ways, added 2026-09-24:
+#
+# 1. garage_door_movement_confirm: after WE pulse the trigger relay
+#    (switch.pico_relay_02efbe_switch_3 -- covers dashboard, the arm/open
+#    flow, and both physical buttons, since they all turn that same switch
+#    on), confirm the sensor actually reports vibration within
+#    garage_door_movement_confirm_seconds. No vibration = the door likely
+#    didn't move (obstruction, mechanical fault, opener not responding) --
+#    worth a notification instead of silently assuming success.
+#
+# 2. garage_vibration_security_alert: the door also has its own RF remote
+#    controllers that open/close it directly, entirely bypassing HA -- so
+#    vibration with no HA-triggered pulse isn't inherently suspicious.
+#    Instead of trying to distinguish "our pulse" from "a remote's pulse"
+#    (we can't -- a remote press never touches HA at all), this watches
+#    the ground truth instead: if vibration is detected while
+#    binary_sensor.garage_door_1_contact is closed, and the door still
+#    hasn't opened garage_vibration_alert_window_seconds later, something
+#    shook the door without actually opening it. Likely wind (Peter's own
+#    prediction, 2026-09-24) -- but also exactly what a forced-entry
+#    attempt on a closed door would look like, so it's worth a low-key
+#    notification rather than silence. Rate-limited via
+#    garage_vibration_last_alert/garage_vibration_alert_cooldown_minutes
+#    so a sustained wind gust doesn't spam repeated alerts.
+#
+# Both are first-pass thresholds -- Peter wants to watch real behaviour
+# (wind especially) before tightening. If it's too noisy, the vibration
+# sensor's own hardware threshold (number.garage_vibration_1_sensitivity)
+# can also be tuned down, independent of these HA-side windows.
 # ─────────────────────────────────────────────────────────────────────────────
 
 input_number:
@@ -50,6 +81,40 @@ input_number:
     unit_of_measurement: "min"
     icon: mdi:timer-lock-open-outline
     mode: box
+
+  garage_door_movement_confirm_seconds:
+    name: "Garage door — movement confirm window"    # live: 8
+    min: 3
+    max: 30
+    step: 1
+    unit_of_measurement: "s"
+    icon: mdi:vibrate
+    mode: box
+
+  garage_vibration_alert_window_seconds:
+    name: "Garage vibration — door-open grace window"    # live: 20
+    min: 5
+    max: 90
+    step: 5
+    unit_of_measurement: "s"
+    icon: mdi:timer-alert-outline
+    mode: box
+
+  garage_vibration_alert_cooldown_minutes:
+    name: "Garage vibration — alert cooldown"    # live: 10
+    min: 1
+    max: 120
+    step: 1
+    unit_of_measurement: "min"
+    icon: mdi:timer-lock-outline
+    mode: box
+
+input_datetime:
+  garage_vibration_last_alert:
+    name: "Garage vibration — last alert sent"
+    has_date: true
+    has_time: true
+    icon: mdi:history
 
 timer:
   garage_door_release:
@@ -140,4 +205,98 @@ automation:
       - action: switch.turn_on
         target:
           entity_id: switch.pico_relay_02efbe_switch_3
+    mode: single
+
+  - id: garage_door_movement_confirm
+    alias: "Garage door: confirm movement after a trigger pulse"
+    description: >-
+      After the trigger relay pulses on (dashboard, button, or the arm/open
+      flow -- all of them turn on switch.pico_relay_02efbe_switch_3),
+      confirm garage-vibration-1 actually reports vibration within
+      garage_door_movement_confirm_seconds. No vibration by then likely
+      means the door didn't move -- notify instead of assuming success.
+    triggers:
+      - trigger: state
+        entity_id: switch.pico_relay_02efbe_switch_3
+        to: "on"
+    actions:
+      - if:
+          - condition: not
+            conditions:
+              - condition: state
+                entity_id: binary_sensor.garage_vibration_1_vibration
+                state: "on"
+        then:
+          - wait_for_trigger:
+              - trigger: state
+                entity_id: binary_sensor.garage_vibration_1_vibration
+                to: "on"
+            timeout: "{{ '00:00:%02d' | format(states('input_number.garage_door_movement_confirm_seconds')|int(8)) }}"
+            continue_on_timeout: true
+          - if:
+              - condition: template
+                value_template: "{{ wait.trigger is none }}"
+            then:
+              - action: notify.mobile_app_iphone_peterl
+                data:
+                  title: "Garage door"
+                  message: >-
+                    Triggered, but no vibration detected on the door within
+                    {{ states('input_number.garage_door_movement_confirm_seconds') }}s
+                    -- it may not have moved (obstruction or fault?).
+                  data:
+                    entity_id: binary_sensor.garage_door_1_contact
+    mode: single
+
+  - id: garage_vibration_security_alert
+    alias: "Garage: vibration without the door opening"
+    description: >-
+      garage-vibration-1 is mounted on the door itself, and the door also
+      has its own RF remotes that bypass HA entirely -- so vibration alone
+      isn't inherently suspicious (a remote press looks identical to wind
+      rattling the door). This watches the ground truth instead: if
+      vibration happens while the door is closed, and it's STILL closed
+      garage_vibration_alert_window_seconds later, something shook the
+      door without actually opening it. Likely wind, but also what a
+      forced-entry attempt on a closed door looks like -- worth a low-key
+      notification either way. Rate-limited to avoid spamming during a
+      sustained wind gust.
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.garage_vibration_1_vibration
+        to: "on"
+    conditions:
+      - condition: state
+        entity_id: binary_sensor.garage_door_1_contact
+        state: "off"
+    actions:
+      - wait_for_trigger:
+          - trigger: state
+            entity_id: binary_sensor.garage_door_1_contact
+            to: "on"
+        timeout: "{{ '00:00:%02d' | format(states('input_number.garage_vibration_alert_window_seconds')|int(20)) }}"
+        continue_on_timeout: true
+      - condition: state
+        entity_id: binary_sensor.garage_door_1_contact
+        state: "off"
+      - condition: template
+        value_template: >-
+          {% set last = states('input_datetime.garage_vibration_last_alert') %}
+          {{ last in ['unknown', 'unavailable'] or
+             (now() - (last | as_datetime)).total_seconds() >=
+             states('input_number.garage_vibration_alert_cooldown_minutes')|int(10) * 60 }}
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.garage_vibration_last_alert
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - action: notify.mobile_app_iphone_peterl
+        data:
+          title: "Garage door"
+          message: >-
+            Vibration detected on the garage door, but it didn't open
+            within {{ states('input_number.garage_vibration_alert_window_seconds') }}s
+            -- possibly wind, possibly someone at the door.
+          data:
+            entity_id: camera.garage_direct
     mode: single
