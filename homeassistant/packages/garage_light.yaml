@@ -28,6 +28,15 @@ input_number:
     icon: mdi:timer-outline
     mode: box
 
+  garage_light_motion_off_minutes:
+    name: "Garage light — motion-off delay"    # live: 2
+    min: 1
+    max: 15
+    step: 1
+    unit_of_measurement: "min"
+    icon: mdi:motion-sensor-off
+    mode: box
+
 timer:
   garage_light_manual:
     name: "Garage light — manual override"
@@ -58,7 +67,7 @@ automation:
         entity_id: binary_sensor.garage_motion_sensors
         from: "on"
         to: "off"
-        for: "00:02:00"
+        for: "{{ '00:%02d:00' | format(states('input_number.garage_light_motion_off_minutes')|int(2)) }}"
         id: motion_clear
       - platform: state
         entity_id: switch.garage_switch_1
