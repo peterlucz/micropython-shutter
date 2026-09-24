@@ -5,7 +5,7 @@
 #
 # One script holds the power logic for the 3D printer corner so every entry
 # point behaves identically. Callers:
-#   - the IKEA remote inside-ikea-1's main toggle (UI-managed automation
+#   - the IKEA remote printer-button-1's main toggle (UI-managed automation
 #     "Socket:3D Printer", config id 1768167659291 — its Toggle All branch
 #     just calls this script; brightness up/down = lamp only, kept inline)
 #   - the Power button on the 3D printer dashboard (dashboards/printer.yaml)
