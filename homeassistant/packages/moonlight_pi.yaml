@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Moonlight Pi power (switch.moonlight_switch_1, a SONOFF ZBMINIL2)
+#
+# Deploy:  python3 deploy_ha.py packages/moonlight_pi.yaml
+#
+# The cellar Raspberry Pi (Moonlight client, ssh alias pi-moonlight,
+# 10.20.0.30) is a plain Debian box, not Kodi/LibreELEC -- so unlike
+# packages/bedroom_kodi.yaml / packages/livingroom_kodi.yaml there's no
+# media_player entity or Kodi JSON-RPC to ask for a clean shutdown. Instead
+# the Pi runs a small systemd service (moonlight-shutdown-listener, see
+# ~/scripts/ on VM101 for the installer used 2026-09-20) that subscribes to
+# moonlight-pi/shutdown/set and runs a real `shutdown -h now` on receiving
+# "ON" -- same MQTT-first shape as the Pico relay boards.
+#
+# No physical button wired yet (Peter chose dashboard/script-only for now,
+# 2026-09-20) -- script.moonlight_pi_toggle is meant to be called from a
+# dashboard button, or later from a Zigbee button's automation via
+# `action: script.turn_on, target: {entity_id: script.moonlight_pi_toggle}`,
+# same pattern as packages/bedroom_kodi.yaml's bedroom_kodi_button.
+#
+# binary_sensor.moonlight_pi_reachable is a Ping (ICMP) integration entry
+# against 10.20.0.30 (added via the config_entries/flow API, same as
+# binary_sensor.bedroom_kodi_pi_reachable) -- there's no fast push-based
+# signal like Kodi's websocket here, so the script actively re-pings it
+# every ~15s after requesting shutdown and cuts the socket once 3
+# consecutive checks come back unreachable, instead of waiting on the
+# integration's own slower background polling. Same debounce constants as
+# packages/bedroom_kodi.yaml's bedroom_kodi_off (40 x ~15s = 10 min worst
+# case before giving up).
+# ─────────────────────────────────────────────────────────────────────────────
+
+script:
+  moonlight_pi_toggle:
+    alias: "Moonlight Pi: toggle power"
+    description: >-
+      Socket off -> power on, Pi boots on its own. Socket on -> ask the Pi
+      to shut down cleanly over MQTT, then cut the socket once
+      binary_sensor.moonlight_pi_reachable confirms it's actually halted.
+    sequence:
+      - choose:
+          - conditions:
+              - condition: state
+                entity_id: switch.moonlight_switch_1
+                state: "off"
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.moonlight_switch_1
+          - conditions:
+              - condition: state
+                entity_id: switch.moonlight_switch_1
+                state: "on"
+            sequence:
+              - action: mqtt.publish
+                data:
+                  topic: moonlight-pi/shutdown/set
+                  payload: "ON"
+              - variables:
+                  miss_count: 0
+              - repeat:
+                  count: 40   # 40 x 15s = 10 min worst case before giving up
+                  sequence:
+                    - condition: state
+                      entity_id: switch.moonlight_switch_1
+                      state: "on"
+                    - action: homeassistant.update_entity
+                      target:
+                        entity_id: binary_sensor.moonlight_pi_reachable
+                    - delay:
+                        seconds: 5
+                    - variables:
+                        miss_count: >-
+                          {{ (miss_count + 1) if is_state('binary_sensor.moonlight_pi_reachable','off') else 0 }}
+                    - if:
+                        - condition: template
+                          value_template: "{{ miss_count >= 3 }}"
+                      then:
+                        - action: switch.turn_off
+                          target:
+                            entity_id: switch.moonlight_switch_1
+                        - stop: "Pi unreachable on 3 consecutive checks, socket cut"
+                    - delay:
+                        seconds: 10
+    mode: single
