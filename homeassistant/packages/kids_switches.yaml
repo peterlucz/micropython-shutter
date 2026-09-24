@@ -1,0 +1,84 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Hanna / Tamara room switches: IKEA STYRBAR remote on/off -> SONOFF switch
+#
+# Deploy:  python3 deploy_ha.py packages/kids_switches.yaml
+#
+# Two independent pairs, same pattern: the remote's plain "on"/"off" button
+# clicks (not the left/right arrows) directly turn the matching switch on/off.
+# switch.hanna_switch_1 / switch.tamara_switch_1 were renamed from their
+# default hex entity_ids (switch.0x94deb8fffe2cac3a / switch.0x003c84fffed7509b)
+# to match this repo's naming convention, 2026-09-19.
+# ─────────────────────────────────────────────────────────────────────────────
+
+automation:
+  - id: hanna_switch_button
+    alias: "Switch:Hanna:Button"
+    description: >-
+      hanna-button-1's on/off clicks directly control switch.hanna_switch_1.
+    triggers:
+      - domain: mqtt
+        device_id: 33f383fb5a632cc90b91cbd201450d15   # hanna-button-1
+        type: action
+        subtype: "on"
+        trigger: device
+        id: "on"
+      - domain: mqtt
+        device_id: 33f383fb5a632cc90b91cbd201450d15   # hanna-button-1
+        type: action
+        subtype: "off"
+        trigger: device
+        id: "off"
+    conditions: []
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: ["on"]
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.hanna_switch_1
+          - conditions:
+              - condition: trigger
+                id: ["off"]
+            sequence:
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.hanna_switch_1
+    mode: single
+
+  - id: tamara_switch_button
+    alias: "Switch:Tamara:Button"
+    description: >-
+      tamara-button-1's on/off clicks directly control switch.tamara_switch_1.
+    triggers:
+      - domain: mqtt
+        device_id: 1ef104ebea8ef9b51a1ceecacc8d05c6   # tamara-button-1
+        type: action
+        subtype: "on"
+        trigger: device
+        id: "on"
+      - domain: mqtt
+        device_id: 1ef104ebea8ef9b51a1ceecacc8d05c6   # tamara-button-1
+        type: action
+        subtype: "off"
+        trigger: device
+        id: "off"
+    conditions: []
+    actions:
+      - choose:
+          - conditions:
+              - condition: trigger
+                id: ["on"]
+            sequence:
+              - action: switch.turn_on
+                target:
+                  entity_id: switch.tamara_switch_1
+          - conditions:
+              - condition: trigger
+                id: ["off"]
+            sequence:
+              - action: switch.turn_off
+                target:
+                  entity_id: switch.tamara_switch_1
+    mode: single
