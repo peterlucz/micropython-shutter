@@ -10,15 +10,30 @@
 # of creating a duplicate.
 #
 # Presets, same idea as before (one of three states, motion/button-triggered):
-#   * daytime — 100% brightness, cool white. Start time now tracks the
+#   * daytime — 100% brightness, cool white. Start time tracks the
 #     shutters' own open time (input_datetime.open_time_workday /
 #     open_time_holiday in packages/shutters.yaml, including their
 #     workday/holiday_days_left resolution) instead of an independent
-#     06:30/08:00 Schedule helper. The "night" preset's end is extended to
-#     match, so there's no gap between the old fixed night cutoff and the
-#     shutters' (later) open time.
-#   * evening / night — unchanged: scene.hallway_evening / scene.hallway_night
-#     (dimmed, warm, UI-managed scenes — deploy_ha.py doesn't push scenes).
+#     fixed Schedule helper. Night's own end is *derived from* that same
+#     open time (not the Schedule integration's separately-editable
+#     working_night/weekend_night "before" field) so the two can never
+#     drift apart -- found live 2026-09-21: open_time_workday (06:20) sat
+#     ten minutes inside the old fixed working_night window (23:00-06:30),
+#     so the night scene kept re-triggering at the open time instead of
+#     daytime. Also: the two Morning-open time triggers fire every day
+#     unconditionally (a bare `time` trigger has no day-of-week filter) --
+#     the automation-level `conditions:` below now requires each one to
+#     match today's actual effective day type (workday vs weekend/holiday,
+#     including the holiday_days_left override) before doing anything, so
+#     the workday trigger can't fire the automation at all on a weekend
+#     and vice versa.
+#   * evening / night — scene.hallway_evening / scene.hallway_night (dimmed,
+#     warm, UI-managed scenes — deploy_ha.py doesn't push scenes). Their
+#     start times (hallway_evening_start, live 21:00; hallway_night_start,
+#     live 23:00) are dashboard-tunable input_datetime helpers (2026-09-21),
+#     shared across workday/weekend since both used identical values anyway
+#     -- previously these lived only in a HA "Schedule" integration entity
+#     not editable from any dashboard here.
 #
 # Daytime color temperature is no longer the scene's fixed 4000K: it's
 # computed from the live outside temperature (sensor.outside_temp_1_temperature,
@@ -30,20 +45,39 @@
 #
 # Full-output override: a second zigbee button forces all 9 lamps to 100%/
 # 4000K regardless of motion, for extended hallway work (cleaning, cupboard).
-# Single click starts it, double click cancels it immediately, and it also
+# Its "on" click starts it, "off" cancels it immediately, and it also
 # auto-expires after hallway_override_minutes as a safety net. While active,
-# the normal motion/schedule branches below stand down.
+# the normal motion/schedule branches below stand down. The same remote's
+# left/right arrows step the lamps' brightness up/down directly, independent
+# of the override/preset state.
 #
-# Override button: inside-button-9 (Loginovo ZG-101ZL Smart Button),
-# device_id a5a1e9a651111f336d0bcdf379e637b6 -- already paired to zigbee2mqtt
-# (was joined earlier, unused by any automation until now), identified
-# 2026-09-17 via a device_announce event while Peter pressed it.
+# Button: hallway-button-1, an IKEA E2001/E2002 (TRADFRI open/close remote),
+# device_id afd8735882986a624d258290db824a6d, paired 2026-09-18. (An earlier
+# Loginovo ZG-101ZL button was tried first for the override -- its switch
+# turned out to have a hardware fault, confirmed dead across many attempts
+# under both operation_mode values and a full re-pair; abandoned in favor of
+# this one. That old device, HA device_id a5a1e9a651111f336d0bcdf379e637b6,
+# may still show up in HA under the same "hallway-button-1" display name
+# from the rename -- it's the dead unit, not this one; safe to remove.)
 # ─────────────────────────────────────────────────────────────────────────────
 
 input_boolean:
   hallway_override:
     name: "Hallway — full output override"
     icon: mdi:lightbulb-alert-outline
+
+input_datetime:
+  hallway_evening_start:
+    name: "Hallway — evening start"   # live: 21:00
+    has_time: true
+    has_date: false
+    icon: mdi:weather-sunset
+
+  hallway_night_start:
+    name: "Hallway — night start"   # live: 23:00
+    has_time: true
+    has_date: false
+    icon: mdi:weather-night
 
 input_number:
   hallway_override_minutes:
@@ -89,6 +123,15 @@ input_number:
     step: 1
     unit_of_measurement: "°C"
     icon: mdi:weather-sunny
+    mode: box
+
+  hallway_dim_step_pct:
+    name: "Hallway dim — step size"   # live: 10
+    min: 1
+    max: 50
+    step: 1
+    unit_of_measurement: "%"
+    icon: mdi:brightness-6
     mode: box
 
 timer:
@@ -149,7 +192,15 @@ automation:
           minutes: 0
           seconds: 0
         id: "Turn off by motion sensor"
-    conditions: []
+    conditions:
+      - alias: "Morning-open triggers only act on their own matching day type"
+        condition: template
+        value_template: >-
+          {% set is_effective_workday = is_state('binary_sensor.workday_sensor','on')
+             and states('input_number.holiday_days_left')|int(0) <= 0 %}
+          {{ trigger.id not in ['Morning open (workday)', 'Morning open (holiday)']
+             or (trigger.id == 'Morning open (workday)' and is_effective_workday)
+             or (trigger.id == 'Morning open (holiday)' and not is_effective_workday) }}
     actions:
       - choose:
           - alias: "Hallway daytime"
@@ -169,14 +220,12 @@ automation:
               - alias: "Is daytime (after shutter open time, before evening)"
                 condition: template
                 value_template: >-
-                  {% set open_time = states('input_datetime.open_time_workday')
-                     if is_state('binary_sensor.workday_sensor','on')
-                        and states('input_number.holiday_days_left')|int(0) <= 0
+                  {% set is_workday = is_state('binary_sensor.workday_sensor','on')
+                     and states('input_number.holiday_days_left')|int(0) <= 0 %}
+                  {% set open_time = states('input_datetime.open_time_workday') if is_workday
                      else states('input_datetime.open_time_holiday') %}
-                  {% set evening_start = state_attr('binary_sensor.working_evening','after')
-                     if is_state('binary_sensor.workday_sensor','on')
-                     else state_attr('binary_sensor.weekend_evening','after') %}
-                  {{ now() >= today_at(open_time) and now() < as_datetime(evening_start) }}
+                  {{ now() >= today_at(open_time)
+                     and now() < today_at(states('input_datetime.hallway_evening_start')) }}
             sequence:
               - alias: "Hallway daytime action"
                 action: light.turn_on
@@ -208,24 +257,11 @@ automation:
               - condition: state
                 entity_id: input_boolean.hallway_override
                 state: "off"
-              - condition: or
-                conditions:
-                  - condition: and
-                    conditions:
-                      - condition: state
-                        entity_id: binary_sensor.workday_sensor
-                        state: ["on"]
-                      - condition: state
-                        entity_id: binary_sensor.working_evening
-                        state: ["on"]
-                  - condition: and
-                    conditions:
-                      - condition: state
-                        entity_id: binary_sensor.workday_sensor
-                        state: ["off"]
-                      - condition: state
-                        entity_id: binary_sensor.weekend_evening
-                        state: ["on"]
+              - alias: "Is evening (between evening start and night start)"
+                condition: template
+                value_template: >-
+                  {{ now() >= today_at(states('input_datetime.hallway_evening_start'))
+                     and now() < today_at(states('input_datetime.hallway_night_start')) }}
             sequence:
               - alias: "Hallway evening action"
                 action: scene.turn_on
@@ -245,16 +281,15 @@ automation:
               - condition: state
                 entity_id: input_boolean.hallway_override
                 state: "off"
-              - alias: "Is night (after 23:00, or before shutter open time)"
+              - alias: "Is night (after night start, or before shutter open time)"
                 condition: template
                 value_template: >-
-                  {% set open_time = states('input_datetime.open_time_workday')
-                     if is_state('binary_sensor.workday_sensor','on')
-                        and states('input_number.holiday_days_left')|int(0) <= 0
+                  {% set is_workday = is_state('binary_sensor.workday_sensor','on')
+                     and states('input_number.holiday_days_left')|int(0) <= 0 %}
+                  {% set open_time = states('input_datetime.open_time_workday') if is_workday
                      else states('input_datetime.open_time_holiday') %}
-                  {{ (is_state('binary_sensor.workday_sensor','on') and is_state('binary_sensor.working_night','on'))
-                     or (is_state('binary_sensor.workday_sensor','off') and is_state('binary_sensor.weekend_night','on'))
-                     or (now() < today_at(open_time)) }}
+                  {{ now() >= today_at(states('input_datetime.hallway_night_start'))
+                     or now() < today_at(open_time) }}
             sequence:
               - alias: "Hallway night action"
                 action: scene.turn_on
@@ -284,21 +319,21 @@ automation:
   - id: hallway_override
     alias: "Light:Hallway:Override"
     description: >-
-      Single click forces all hallway lamps to 100%/4000K regardless of
-      motion, for extended work in the hallway. Double click, or an idle
+      "On" click forces all hallway lamps to 100%/4000K regardless of
+      motion, for extended work in the hallway. "Off" click, or an idle
       timeout (hallway_override_minutes), cancels it and turns the lights
       off. While active, Light:Hallway:Light stands down.
     triggers:
       - domain: mqtt
-        device_id: a5a1e9a651111f336d0bcdf379e637b6   # inside-button-9
+        device_id: afd8735882986a624d258290db824a6d   # hallway-button-1 (IKEA remote)
         type: action
-        subtype: single
+        subtype: "on"
         trigger: device
         id: "override_on"
       - domain: mqtt
-        device_id: a5a1e9a651111f336d0bcdf379e637b6   # inside-button-9
+        device_id: afd8735882986a624d258290db824a6d   # hallway-button-1 (IKEA remote)
         type: action
-        subtype: double
+        subtype: "off"
         trigger: device
         id: "override_off"
       - platform: event
@@ -327,7 +362,7 @@ automation:
                   entity_id: light.all_hallway_lights
                 data:
                   brightness_pct: 100
-                  color_temp_kelvin: 4000
+                  color_temp_kelvin: "{{ states('input_number.hallway_daytime_kelvin_cool')|int(4000) }}"
           - alias: "End override"
             conditions:
               - condition: trigger
@@ -342,4 +377,35 @@ automation:
               - action: light.turn_off
                 target:
                   entity_id: light.all_hallway_lights
+    mode: single
+
+  # ── 3. Manual dim (left/right arrows) ─────────────────────────────────────
+  - id: hallway_dim
+    alias: "Light:Hallway:Dim"
+    description: >-
+      The hallway remote's left/right arrows step the lamps' brightness
+      down/up by hallway_dim_step_pct, independent of whatever preset or
+      override is currently active.
+    triggers:
+      - domain: mqtt
+        device_id: afd8735882986a624d258290db824a6d   # hallway-button-1 (IKEA remote)
+        type: action
+        subtype: arrow_left_click
+        trigger: device
+        id: "dim_down"
+      - domain: mqtt
+        device_id: afd8735882986a624d258290db824a6d   # hallway-button-1 (IKEA remote)
+        type: action
+        subtype: arrow_right_click
+        trigger: device
+        id: "dim_up"
+    conditions: []
+    actions:
+      - action: light.turn_on
+        target:
+          entity_id: light.all_hallway_lights
+        data:
+          brightness_step_pct: >-
+            {% set step = states('input_number.hallway_dim_step_pct')|int(10) %}
+            {{ -step if trigger.id == 'dim_down' else step }}
     mode: single
