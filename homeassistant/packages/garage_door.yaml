@@ -57,10 +57,12 @@
 #    garage_vibration_last_alert/garage_vibration_alert_cooldown_minutes
 #    so a sustained wind gust doesn't spam repeated alerts.
 #
-# Both are first-pass thresholds -- Peter wants to watch real behaviour
-# (wind especially) before tightening. If it's too noisy, the vibration
-# sensor's own hardware threshold (number.garage_vibration_1_sensitivity)
-# can also be tuned down, independent of these HA-side windows.
+# Both were first-pass thresholds -- Peter wanted to watch real behaviour
+# (wind especially) before tightening. DISABLED 2026-09-24 (initial_state:
+# false on both): Peter found the sensor less effective than hoped after a
+# short trial. Left in the repo, not deleted, in case it's worth revisiting
+# -- e.g. with the hardware sensitivity (number.garage_vibration_1_sensitivity)
+# tuned down first.
 # ─────────────────────────────────────────────────────────────────────────────
 
 input_number:
@@ -215,6 +217,9 @@ automation:
       confirm garage-vibration-1 actually reports vibration within
       garage_door_movement_confirm_seconds. No vibration by then likely
       means the door didn't move -- notify instead of assuming success.
+    initial_state: false   # disabled 2026-09-24, Peter found the sensor
+      # less effective than hoped -- kept in place in case it's worth
+      # revisiting rather than deleted.
     triggers:
       - trigger: state
         entity_id: switch.pico_relay_02efbe_switch_3
@@ -261,6 +266,9 @@ automation:
       forced-entry attempt on a closed door looks like -- worth a low-key
       notification either way. Rate-limited to avoid spamming during a
       sustained wind gust.
+    initial_state: false   # disabled 2026-09-24, Peter found the sensor
+      # less effective than hoped -- kept in place in case it's worth
+      # revisiting rather than deleted.
     triggers:
       - trigger: state
         entity_id: binary_sensor.garage_vibration_1_vibration
