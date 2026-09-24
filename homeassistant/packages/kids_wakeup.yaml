@@ -1,0 +1,175 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Kids' wake-up light: Hanna & Tamara, independent workday/holiday times
+#
+# Deploy:  python3 deploy_ha.py packages/kids_wakeup.yaml
+#
+# Turns each kid's room switch (switch.hanna_switch_1 / switch.tamara_switch_1
+# — confirmed 2026-09-21 these drive the actual room lamp, not just a socket)
+# on at a resolved wake-up time, instant full-on, as a morning wake-up alert.
+# Each kid has two independently-tunable times -- workday and holiday --
+# resolved the same way the shutters resolve open_time_workday/holiday
+# (binary_sensor.workday_sensor for the base calendar fact, overridden by a
+# days-left countdown while it's above zero). Unlike the shutters, each kid
+# has her OWN countdown (hanna_holiday_days_left / tamara_holiday_days_left,
+# 2026-09-21) rather than sharing the shutters' -- one kid can be off school
+# sick or on a different break while the other isn't, without touching the
+# shutters' own schedule or the other kid's.
+#
+# Trigger shape follows packages/hallway_light.yaml's pattern (fixed
+# 2026-09-21): both the workday and holiday `time` triggers fire every day
+# unconditionally (a bare time trigger has no day-of-week filter) -- the
+# automation-level `conditions:` requires each one to match today's actual
+# effective day type before doing anything, so the workday trigger can't
+# fire on a real holiday and vice versa.
+#
+# No auto-off is built in -- turning the lamp back off is normal manual
+# usage via the switch/dashboard, not part of this automation's job.
+# ─────────────────────────────────────────────────────────────────────────────
+
+input_datetime:
+  hanna_wakeup_workday:
+    name: "Hanna wake-up — workday"   # live: 07:00
+    has_time: true
+    has_date: false
+    icon: mdi:alarm
+
+  hanna_wakeup_holiday:
+    name: "Hanna wake-up — holiday"   # live: 08:30
+    has_time: true
+    has_date: false
+    icon: mdi:alarm-snooze
+
+  tamara_wakeup_workday:
+    name: "Tamara wake-up — workday"   # live: 07:00
+    has_time: true
+    has_date: false
+    icon: mdi:alarm
+
+  tamara_wakeup_holiday:
+    name: "Tamara wake-up — holiday"   # live: 08:30
+    has_time: true
+    has_date: false
+    icon: mdi:alarm-snooze
+
+input_number:
+  hanna_holiday_days_left:
+    # Holiday override: while above zero, mornings use hanna_wakeup_holiday
+    # even on a real workday. Counts remaining days INCLUDING today (e.g.
+    # 5 = today plus four more) -- ticks down by one every midnight until
+    # zero, when the workday time resumes. Independent of Tamara's and the
+    # shutters' own holiday_days_left.
+    name: "Hanna — holiday days left"
+    min: 0
+    max: 60
+    step: 1
+    unit_of_measurement: "days"
+    icon: mdi:beach
+    mode: box
+
+  tamara_holiday_days_left:
+    name: "Tamara — holiday days left"
+    min: 0
+    max: 60
+    step: 1
+    unit_of_measurement: "days"
+    icon: mdi:beach
+    mode: box
+
+automation:
+  - id: hanna_wakeup_light
+    alias: "Light:Hanna:WakeUp"
+    description: >-
+      Turns switch.hanna_switch_1 on at the resolved wake-up time (workday
+      or holiday, matching today's actual day type) as a morning wake-up
+      alert.
+    triggers:
+      - trigger: time
+        at: input_datetime.hanna_wakeup_workday
+        id: "workday"
+      - trigger: time
+        at: input_datetime.hanna_wakeup_holiday
+        id: "holiday"
+    conditions:
+      - alias: "Only act on the trigger matching today's actual day type"
+        condition: template
+        value_template: >-
+          {% set is_effective_workday = is_state('binary_sensor.workday_sensor','on')
+             and states('input_number.hanna_holiday_days_left')|int(0) <= 0 %}
+          {{ (trigger.id == 'workday' and is_effective_workday)
+             or (trigger.id == 'holiday' and not is_effective_workday) }}
+    actions:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.hanna_switch_1
+    mode: single
+
+  - id: tamara_wakeup_light
+    alias: "Light:Tamara:WakeUp"
+    description: >-
+      Turns switch.tamara_switch_1 on at the resolved wake-up time (workday
+      or holiday, matching today's actual day type) as a morning wake-up
+      alert.
+    triggers:
+      - trigger: time
+        at: input_datetime.tamara_wakeup_workday
+        id: "workday"
+      - trigger: time
+        at: input_datetime.tamara_wakeup_holiday
+        id: "holiday"
+    conditions:
+      - alias: "Only act on the trigger matching today's actual day type"
+        condition: template
+        value_template: >-
+          {% set is_effective_workday = is_state('binary_sensor.workday_sensor','on')
+             and states('input_number.tamara_holiday_days_left')|int(0) <= 0 %}
+          {{ (trigger.id == 'workday' and is_effective_workday)
+             or (trigger.id == 'holiday' and not is_effective_workday) }}
+    actions:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.tamara_switch_1
+    mode: single
+
+  - id: hanna_holiday_countdown
+    alias: "Light:Hanna:HolidayCountdown"
+    description: >-
+      Ticks hanna_holiday_days_left down by one every midnight until it
+      reaches zero -- same pattern as the shutters' own holiday countdown,
+      but independent so Hanna's holiday schedule doesn't have to match
+      Tamara's or the shutters'.
+    triggers:
+      - platform: time
+        at: "00:00:00"
+    conditions:
+      - condition: numeric_state
+        entity_id: input_number.hanna_holiday_days_left
+        above: 0
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.hanna_holiday_days_left
+        data:
+          value: "{{ [states('input_number.hanna_holiday_days_left')|int(0) - 1, 0]|max }}"
+    mode: single
+
+  - id: tamara_holiday_countdown
+    alias: "Light:Tamara:HolidayCountdown"
+    description: >-
+      Ticks tamara_holiday_days_left down by one every midnight until it
+      reaches zero -- same pattern as the shutters' own holiday countdown,
+      but independent so Tamara's holiday schedule doesn't have to match
+      Hanna's or the shutters'.
+    triggers:
+      - platform: time
+        at: "00:00:00"
+    conditions:
+      - condition: numeric_state
+        entity_id: input_number.tamara_holiday_days_left
+        above: 0
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.tamara_holiday_days_left
+        data:
+          value: "{{ [states('input_number.tamara_holiday_days_left')|int(0) - 1, 0]|max }}"
+    mode: single
