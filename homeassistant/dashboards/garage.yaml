@@ -27,7 +27,9 @@ views:
       - type: entity
         entity: binary_sensor.garage_motion_3_occupancy
       - type: entity
-        entity: binary_sensor.garage_motion_7_occupancy
+        entity: binary_sensor.garage_motion_4_occupancy
+      - type: entity
+        entity: binary_sensor.front_motion_1_occupancy
     sections:
       - type: grid
         cards:
@@ -76,9 +78,7 @@ views:
             grid_options: {columns: 6, rows: 2}
             tap_action:
               action: perform-action
-              perform_action: timer.start
-              target:
-                entity_id: timer.garage_door_release
+              perform_action: script.garage_door_arm
           - type: tile
             entity: timer.garage_door_release
             name: Release window

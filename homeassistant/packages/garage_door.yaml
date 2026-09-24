@@ -23,7 +23,8 @@
 # restart drops the window, which is the safe direction.
 #
 # Physical buttons: a single or double click on garage-button-1 (SONOFF, in
-# the garage) or inside-button-4 (Aqara mini switch) pulses the relay
+# the garage) or garage-button-2 (Aqara mini switch, renamed from
+# inside-button-4 and moved to the garage area 2026-09-24) pulses the relay
 # directly — pressing a dedicated physical button is the deliberate gesture,
 # so no release window is involved. (Started double-click-only 2026-07-17;
 # single click added 2026-07-18 once the buttons had earned trust.) The
@@ -41,13 +42,41 @@ input_number:
     icon: mdi:timer-outline
     mode: box
 
+  garage_door_arm_minutes:
+    name: "Garage door — dashboard arming window"    # live: 1
+    min: 1
+    max: 10
+    step: 1
+    unit_of_measurement: "min"
+    icon: mdi:timer-lock-open-outline
+    mode: box
+
 timer:
   garage_door_release:
     name: "Garage door — opener release"
     icon: mdi:lock-open-variant
-    duration: "00:01:00"
+    duration: "00:01:00"   # fallback default; garage_door_arm overrides this with garage_door_arm_minutes
 
 script:
+  garage_door_arm:
+    alias: "Garage door: arm release window"
+    description: >-
+      Starts timer.garage_door_release for garage_door_arm_minutes. A
+      template in a dashboard button's tap_action data is never rendered
+      (that's frontend-only, unlike automation/script YAML) -- found
+      2026-09-21 when the button sent the literal template string straight
+      to timer.start. This script exists so the templating happens
+      server-side; the dashboard button calls this instead of timer.start
+      directly.
+    icon: mdi:lock-open-variant
+    sequence:
+      - action: timer.start
+        target:
+          entity_id: timer.garage_door_release
+        data:
+          duration: "{{ '00:%02d:00' | format(states('input_number.garage_door_arm_minutes')|int(1)) }}"
+    mode: single
+
   garage_door_open:
     alias: "Garage door: trigger opener"
     description: >-
@@ -84,7 +113,7 @@ automation:
     alias: "Garage door: open on button click"
     description: >-
       Pulses the garage door relay on a single or double click of
-      garage-button-1 or inside-button-4. The physical button press is the
+      garage-button-1 or garage-button-2. The physical button press is the
       confirmation gesture, so this bypasses the dashboard release window.
     triggers:
       - platform: device
@@ -99,12 +128,12 @@ automation:
         subtype: double
       - platform: device
         domain: mqtt
-        device_id: f8fe8d9686f18cad98e30f08d00ffadf   # inside-button-4
+        device_id: f8fe8d9686f18cad98e30f08d00ffadf   # garage-button-2
         type: action
         subtype: single
       - platform: device
         domain: mqtt
-        device_id: f8fe8d9686f18cad98e30f08d00ffadf   # inside-button-4
+        device_id: f8fe8d9686f18cad98e30f08d00ffadf   # garage-button-2
         type: action
         subtype: double
     actions:
