@@ -51,6 +51,14 @@
 # left/right arrows step the lamps' brightness up/down directly, independent
 # of the override/preset state.
 #
+# Turn-off reliability: light.all_hallway_lights fans out to 9 individual
+# Zigbee commands via Z2M, with no HA-level delivery guarantee. Peter
+# reported some lamps randomly staying on after an off -- history showed
+# hallway_lamp_4b and _8b are repeat offenders (11+ / 7+ times over 48h),
+# with occasional others, pointing at marginal Zigbee links rather than
+# pure chance. Fixed 2026-09-24: the off branch now waits for the 5s
+# transition, then retries turn_off on any still-on stragglers (up to 2x).
+#
 # Button: hallway-button-1, an IKEA E2001/E2002 (TRADFRI open/close remote),
 # device_id afd8735882986a624d258290db824a6d, paired 2026-09-18. (An earlier
 # Loginovo ZG-101ZL button was tried first for the override -- its switch
@@ -313,6 +321,29 @@ automation:
                   entity_id: light.all_hallway_lights
                 data:
                   transition: 5
+              # light.all_hallway_lights fans out to 9 individual Zigbee
+              # commands with no HA-level delivery guarantee -- found
+              # 2026-09-24 that hallway_lamp_4b and _8b in particular
+              # regularly miss the off command and stay lit. Catch and
+              # retry any stragglers instead of leaving them on until the
+              # next motion/button event.
+              - delay:
+                  seconds: 7
+              - repeat:
+                  count: 2
+                  sequence:
+                    - condition: template
+                      value_template: >-
+                        {{ expand('light.all_hallway_lights')
+                           | selectattr('state', 'eq', 'on') | list | count > 0 }}
+                    - action: light.turn_off
+                      target:
+                        entity_id: >-
+                          {{ expand('light.all_hallway_lights')
+                             | selectattr('state', 'eq', 'on')
+                             | map(attribute='entity_id') | list }}
+                    - delay:
+                        seconds: 4
     mode: single
 
   # ── 2. Full-output override (cleaning / cupboard) ─────────────────────────
