@@ -29,7 +29,7 @@
 # threshold on its own, so the condition failed on every run from
 # 2026-08-11 through 2026-08-25 and the socket never cut — confirmed via
 # automation traces (all `failed_conditions` at the power check) and a
-# week of sensor.inside_socket_3_power history (never settles under 2 W
+# week of sensor.bedroom_socket_3_power history (never settles under 2 W
 # once the Chromecast is sharing the circuit, even overnight with the Pi
 # genuinely off).
 #
@@ -46,7 +46,7 @@
 # 1st attempt: gate pinging on socket power dropping below a threshold
 # (~4.9 W, between the Chromecast's idle ceiling and Kodi's playing
 # floor), to avoid pinging at all while Kodi's obviously in use. Reverted
-# within the hour — sensor.inside_socket_3_power is a zigbee2mqtt sensor
+# within the hour — sensor.bedroom_socket_3_power is a zigbee2mqtt sensor
 # that only reports on its own schedule/delta threshold, not something HA
 # polls on demand. Caught it live: it sat at a stale 4.91 W for 20+
 # minutes spanning an actual Kodi shutdown, permanently above the gate,
@@ -117,12 +117,12 @@ automation:
           # socket off -> power up, Pi boots by itself
           - conditions:
               - condition: state
-                entity_id: switch.inside_socket_3
+                entity_id: switch.bedroom_socket_3
                 state: "off"
             sequence:
               - action: switch.turn_on
                 target:
-                  entity_id: switch.inside_socket_3
+                  entity_id: switch.bedroom_socket_3
           # Kodi running -> graceful shutdown; socket-off follows via
           # the automation below
           - conditions:
@@ -160,12 +160,12 @@ automation:
                 state: "off"
               - action: switch.turn_off
                 target:
-                  entity_id: switch.inside_socket_3
+                  entity_id: switch.bedroom_socket_3
               - delay:
                   seconds: 5
               - action: switch.turn_on
                 target:
-                  entity_id: switch.inside_socket_3
+                  entity_id: switch.bedroom_socket_3
       # remaining case (socket on, Kodi unreachable, power still high —
       # a live but disconnected Pi): deliberately do nothing
     mode: single
@@ -187,7 +187,7 @@ automation:
         for: "00:01:00"
     conditions:
       - condition: state
-        entity_id: switch.inside_socket_3
+        entity_id: switch.bedroom_socket_3
         state: "on"
     actions:
       - variables:
@@ -196,7 +196,7 @@ automation:
           count: 40   # 40 x 15s = 10 min worst case before giving up
           sequence:
             - condition: state
-              entity_id: switch.inside_socket_3
+              entity_id: switch.bedroom_socket_3
               state: "on"
             - action: homeassistant.update_entity
               target:
@@ -212,7 +212,7 @@ automation:
               then:
                 - action: switch.turn_off
                   target:
-                    entity_id: switch.inside_socket_3
+                    entity_id: switch.bedroom_socket_3
                 - stop: "Pi unreachable on 3 consecutive checks, socket cut"
             - delay:
                 seconds: 10
@@ -270,7 +270,7 @@ automation:
           - "off"
           - idle
       - condition: state
-        entity_id: switch.inside_socket_3
+        entity_id: switch.bedroom_socket_3
         state: "on"
     actions:
       - action: kodi.call_method
@@ -292,5 +292,5 @@ automation:
           seconds: 15
       - action: switch.turn_off
         target:
-          entity_id: switch.inside_socket_3
+          entity_id: switch.bedroom_socket_3
     mode: single

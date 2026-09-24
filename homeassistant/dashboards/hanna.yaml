@@ -5,8 +5,8 @@
 # Config dashboard, same helpers either way).
 #
 # Two shutters (pico_relay_02efbc_shutter_1, pico_relay_02efbe_shutter_2).
-# inside_temp_4 (temp/humidity) was moved out to Tamara's room 2026-09-22 —
-# Hanna already has her own full sensor (inside_air_1: temp/humidity/PM2.5/
+# tamara_temp_4 (temp/humidity) was moved out to Tamara's room 2026-09-22 —
+# Hanna already has her own full sensor (hanna_air_1: temp/humidity/PM2.5/
 # VOC), so it wasn't needed here.
 #
 # Built-in cards only. Pushed to HA at /dashboard-hanna via push_dashboard.py.
@@ -20,9 +20,9 @@ views:
       - type: entity
         entity: switch.hanna_switch_1
       - type: entity
-        entity: sensor.inside_air_1_temperature
+        entity: sensor.hanna_air_1_temperature
       - type: entity
-        entity: sensor.inside_air_1_humidity
+        entity: sensor.hanna_air_1_humidity
       - type: entity
         entity: cover.pico_relay_02efbc_shutter_1
       - type: entity
@@ -98,19 +98,19 @@ views:
 
           # ── Room sensors ──────────────────────────────────────────
           - type: tile
-            entity: sensor.inside_air_1_temperature
+            entity: sensor.hanna_air_1_temperature
             name: Temperature
             grid_options: {columns: 3, rows: 2}
           - type: tile
-            entity: sensor.inside_air_1_humidity
+            entity: sensor.hanna_air_1_humidity
             name: Humidity
             grid_options: {columns: 3, rows: 2}
           - type: tile
-            entity: sensor.inside_air_1_pm25
+            entity: sensor.hanna_air_1_pm25
             name: PM2.5
             grid_options: {columns: 3, rows: 2}
           - type: tile
-            entity: sensor.inside_air_1_voc_index
+            entity: sensor.hanna_air_1_voc_index
             name: VOC index
             grid_options: {columns: 3, rows: 2}
 

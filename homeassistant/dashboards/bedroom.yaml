@@ -12,7 +12,7 @@ views:
     icon: mdi:bed
     badges:
       - type: entity
-        entity: switch.inside_socket_3
+        entity: switch.bedroom_socket_3
       - type: entity
         entity: sensor.inside_temp_1_temperature
       - type: entity
@@ -61,7 +61,7 @@ views:
 
           # ── Kodi / Chromecast / socket ──────────────────────────────
           - type: tile
-            entity: switch.inside_socket_3
+            entity: switch.bedroom_socket_3
             name: Kodi power
             state_content:
               - state

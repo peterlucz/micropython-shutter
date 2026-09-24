@@ -45,7 +45,7 @@ views:
             elements:
               # Living room
               - type: state-icon
-                entity: switch.inside_socket_2
+                entity: switch.livingroom_socket_2
                 style: {top: "36%", left: "20%"}
               - type: state-label
                 entity: sensor.inside_temp_2_temperature
@@ -84,7 +84,7 @@ views:
             elements:
               # Bedroom (13.29 m², leftmost)
               - type: state-icon
-                entity: switch.inside_socket_3
+                entity: switch.bedroom_socket_3
                 style: {top: "27%", left: "17%"}
               - type: state-label
                 entity: sensor.inside_temp_1_temperature
@@ -95,7 +95,7 @@ views:
                 entity: switch.hanna_switch_1
                 style: {top: "56%", left: "51%"}
               - type: state-label
-                entity: sensor.inside_air_1_temperature
+                entity: sensor.hanna_air_1_temperature
                 style: {top: "63%", left: "51%"}
 
               # Tamara (11.66 m², middle-right)

@@ -1,5 +1,5 @@
 # Tamara's room dashboard — same pattern as dashboards/hanna.yaml.
-# inside_temp_4 (temp/humidity) moved in from Hanna's room 2026-09-22.
+# tamara_temp_4 (temp/humidity) moved in from Hanna's room 2026-09-22.
 #
 # Built-in cards only. Pushed to HA at /dashboard-tamara via push_dashboard.py.
 

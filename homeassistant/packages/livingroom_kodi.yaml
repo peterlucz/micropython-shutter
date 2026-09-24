@@ -98,17 +98,17 @@ automation:
               - condition: trigger
                 id: "single"
               - condition: state
-                entity_id: switch.inside_socket_2
+                entity_id: switch.livingroom_socket_2
                 state: "off"
             sequence:
               - action: switch.turn_on
                 target:
-                  entity_id: switch.inside_socket_2
+                  entity_id: switch.livingroom_socket_2
           - conditions:
               - condition: trigger
                 id: "double"
               - condition: state
-                entity_id: switch.inside_socket_2
+                entity_id: switch.livingroom_socket_2
                 state: "on"
             sequence:
               - action: kodi.call_method
@@ -130,7 +130,7 @@ automation:
                   seconds: 15
               - action: switch.turn_off
                 target:
-                  entity_id: switch.inside_socket_2
+                  entity_id: switch.livingroom_socket_2
     mode: single
 
   - id: livingroom_kodi_idle_night
@@ -160,7 +160,7 @@ automation:
           - idle
           - paused
       - condition: state
-        entity_id: switch.inside_socket_2
+        entity_id: switch.livingroom_socket_2
         state: "on"
     actions:
       - action: kodi.call_method
@@ -182,5 +182,5 @@ automation:
           seconds: 15
       - action: switch.turn_off
         target:
-          entity_id: switch.inside_socket_2
+          entity_id: switch.livingroom_socket_2
     mode: single
