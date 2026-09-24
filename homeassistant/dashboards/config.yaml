@@ -1,0 +1,155 @@
+# Config dashboard — history charts + tuning knobs for every automation
+# with dashboard-editable parameters. Started as "Shutter config" (renamed
+# 2026-09-21 and expanded to cover more than shutters); url_path stays
+# /shutters-test for now since it's already bookmarked/in the sidebar —
+# rename the url_path too if that's ever worth the churn.
+#
+# Positions come from 6 config-entry template sensors mirroring the cover
+# groups' current_position attribute (sensor.shutter_pos_* — created via the
+# template config flow; deploy_ha.py cannot push them). The forecast chart is
+# fed by shutters_update_daily_temps (Met.no, drives the schedule) and the
+# shutters_test_provider_temps comparison automation (Open-Meteo benchmark,
+# live-only — delete both openmeteo helpers + that automation when the
+# comparison has served its purpose).
+#
+# Built-in cards only. Pushed to HA at /shutters-test via push_dashboard.py.
+
+title: Config
+views:
+  - title: Config
+    path: shutter-config
+    icon: mdi:tune
+    type: sections
+    max_columns: 2
+    sections:
+      # ── Real cover-group positions (3 days) ──────────────────────
+      - type: grid
+        column_span: 2
+        cards:
+          - type: history-graph
+            title: Shutter positions — 3-day history (%)
+            hours_to_show: 72
+            entities:
+              - entity: sensor.shutter_pos_normal
+                name: Normal
+              - entity: sensor.shutter_pos_normal_vent
+                name: Normal + vent
+              - entity: sensor.shutter_pos_delayed
+                name: Delayed
+              - entity: sensor.shutter_pos_delayed_vent
+                name: Delayed + vent
+              - entity: sensor.shutter_pos_kids
+                name: Kids
+              - entity: sensor.shutter_pos_kids_vent
+                name: Kids + vent
+
+      # ── Forecast inputs driving the schedule ─────────────────────
+      - type: grid
+        column_span: 2
+        cards:
+          - type: history-graph
+            title: Forecast inputs & ventilation decision (3 days)
+            hours_to_show: 72
+            entities:
+              - entity: input_number.today_temp_max
+                name: Max — Met.no (drives schedule)
+              - entity: input_number.today_temp_max_openmeteo
+                name: Max — Open-Meteo
+              - entity: input_number.tonight_temp_min
+                name: Night min — Met.no (drives schedule)
+              - entity: input_number.tonight_temp_min_openmeteo
+                name: Night min — Open-Meteo
+              - entity: binary_sensor.ventilation_recommended
+                name: Ventilation recommended
+
+      # ── Shutters ───────────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: entities
+            title: Shutters
+            entities:
+              - input_datetime.open_time_workday
+              - input_datetime.open_time_holiday
+              - input_datetime.kids_close_time
+              - input_number.delayed_close_offset
+              - type: section
+                label: Ventilation decision
+              - input_number.vent_day_temp_threshold
+              - input_number.vent_night_temp_floor
+              - input_number.vent_night_temp_ceiling
+              - input_number.ventilation_close_level_normal
+              - input_number.ventilation_close_level_delayed
+              - input_number.ventilation_close_level_kids
+              - binary_sensor.ventilation_recommended
+              - type: section
+                label: Temperature-based open level
+              - input_number.temp_full_open
+              - input_number.temp_min_open
+              - input_number.min_open_position
+
+      # ── Hallway lights ─────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: entities
+            title: Hallway lights
+            entities:
+              - input_datetime.hallway_evening_start
+              - input_datetime.hallway_night_start
+              - type: section
+                label: Daytime color temperature
+              - input_number.hallway_daytime_kelvin_warm
+              - input_number.hallway_daytime_kelvin_cool
+              - input_number.hallway_temp_cold
+              - input_number.hallway_temp_hot
+              - type: section
+                label: Full-output override & manual dim
+              - input_number.hallway_override_minutes
+              - input_number.hallway_dim_step_pct
+
+      # ── Garage ─────────────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: entities
+            title: Garage
+            entities:
+              - input_number.garage_light_manual_minutes
+              - input_number.garage_light_motion_off_minutes
+              - type: section
+                label: Door
+              - input_number.garage_door_pulse_ms
+              - input_number.garage_door_arm_minutes
+
+      # ── Bedroom Kodi ───────────────────────────────────────────
+      - type: grid
+        cards:
+          - type: entities
+            title: Bedroom Kodi
+            entities:
+              - input_datetime.bedroom_kodi_quiet_start
+              - input_datetime.bedroom_kodi_quiet_end
+              - input_number.bedroom_kodi_idle_minutes
+
+      # ── Living room Kodi ───────────────────────────────────────
+      - type: grid
+        cards:
+          - type: entities
+            title: Living room Kodi
+            entities:
+              - input_datetime.livingroom_kodi_quiet_start
+              - input_datetime.livingroom_kodi_quiet_end
+              - input_number.livingroom_kodi_idle_minutes
+
+      # ── Kids' wake-up light ────────────────────────────────────
+      - type: grid
+        cards:
+          - type: entities
+            title: Kids' wake-up light
+            entities:
+              - type: section
+                label: Hanna
+              - input_datetime.hanna_wakeup_workday
+              - input_datetime.hanna_wakeup_holiday
+              - type: section
+                label: Tamara
+              - input_datetime.tamara_wakeup_workday
+              - input_datetime.tamara_wakeup_holiday
