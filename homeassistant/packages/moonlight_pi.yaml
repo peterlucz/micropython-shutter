@@ -12,11 +12,16 @@
 # moonlight-pi/shutdown/set and runs a real `shutdown -h now` on receiving
 # "ON" -- same MQTT-first shape as the Pico relay boards.
 #
-# No physical button wired yet (Peter chose dashboard/script-only for now,
-# 2026-09-20) -- script.moonlight_pi_toggle is meant to be called from a
-# dashboard button, or later from a Zigbee button's automation via
-# `action: script.turn_on, target: {entity_id: script.moonlight_pi_toggle}`,
-# same pattern as packages/bedroom_kodi.yaml's bedroom_kodi_button.
+# Button (2026-09-26): printer-button-1, the IKEA remote in the cellar --
+# right arrow = script.moonlight_pi_on, left arrow = script.moonlight_pi_off.
+# script.moonlight_pi_toggle stays as the single dashboard entry point.
+#
+# KNOWN ISSUE (found 2026-09-26): binary_sensor.moonlight_pi_reachable has
+# read "off" since it was created on 2026-09-20 -- ICMP to 10.20.0.30 never
+# reaches the Pi (its /proc/net/snmp InEchos stays 0 while SSH to the same IP
+# works), so it's dropped in the network (UniFi), not on the Pi. Until that's
+# fixed the off script can't tell a halted Pi from a running one; the 30s
+# head start is what keeps it from cutting power mid-shutdown.
 #
 # binary_sensor.moonlight_pi_reachable is a Ping (ICMP) integration entry
 # against 10.20.0.30 (added via the config_entries/flow API, same as
@@ -30,55 +35,110 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 script:
+  moonlight_pi_on:
+    alias: "Moonlight Pi: power on"
+    description: "Socket on; the Pi boots by itself. No-op if already on."
+    sequence:
+      - condition: state
+        entity_id: switch.moonlight_switch_1
+        state: "off"
+      - action: switch.turn_on
+        target:
+          entity_id: switch.moonlight_switch_1
+    mode: single
+
+  moonlight_pi_off:
+    alias: "Moonlight Pi: shut down and power off"
+    description: >-
+      Asks the Pi to shut down cleanly over MQTT, then cuts the socket once
+      binary_sensor.moonlight_pi_reachable confirms it's actually halted.
+      No-op if the socket is already off.
+    sequence:
+      - condition: state
+        entity_id: switch.moonlight_switch_1
+        state: "on"
+      - action: mqtt.publish
+        data:
+          topic: moonlight-pi/shutdown/set
+          payload: "ON"
+      # Head start before trusting "unreachable": a halt takes ~5-15s, and
+      # the ping sensor must never be able to cut power on a still-running Pi
+      # just because the first checks came in early.
+      - delay:
+          seconds: 30
+      - variables:
+          miss_count: 0
+      - repeat:
+          count: 40   # 40 x 15s = 10 min worst case before giving up
+          sequence:
+            - condition: state
+              entity_id: switch.moonlight_switch_1
+              state: "on"
+            - action: homeassistant.update_entity
+              target:
+                entity_id: binary_sensor.moonlight_pi_reachable
+            - delay:
+                seconds: 5
+            - variables:
+                miss_count: >-
+                  {{ (miss_count + 1) if is_state('binary_sensor.moonlight_pi_reachable','off') else 0 }}
+            - if:
+                - condition: template
+                  value_template: "{{ miss_count >= 3 }}"
+              then:
+                - action: switch.turn_off
+                  target:
+                    entity_id: switch.moonlight_switch_1
+                - stop: "Pi unreachable on 3 consecutive checks, socket cut"
+            - delay:
+                seconds: 10
+    mode: single
+
   moonlight_pi_toggle:
     alias: "Moonlight Pi: toggle power"
-    description: >-
-      Socket off -> power on, Pi boots on its own. Socket on -> ask the Pi
-      to shut down cleanly over MQTT, then cut the socket once
-      binary_sensor.moonlight_pi_reachable confirms it's actually halted.
+    description: "Dashboard entry point: on if off, clean shutdown if on."
     sequence:
-      - choose:
-          - conditions:
-              - condition: state
-                entity_id: switch.moonlight_switch_1
-                state: "off"
-            sequence:
-              - action: switch.turn_on
-                target:
-                  entity_id: switch.moonlight_switch_1
-          - conditions:
-              - condition: state
-                entity_id: switch.moonlight_switch_1
-                state: "on"
-            sequence:
-              - action: mqtt.publish
-                data:
-                  topic: moonlight-pi/shutdown/set
-                  payload: "ON"
-              - variables:
-                  miss_count: 0
-              - repeat:
-                  count: 40   # 40 x 15s = 10 min worst case before giving up
-                  sequence:
-                    - condition: state
-                      entity_id: switch.moonlight_switch_1
-                      state: "on"
-                    - action: homeassistant.update_entity
-                      target:
-                        entity_id: binary_sensor.moonlight_pi_reachable
-                    - delay:
-                        seconds: 5
-                    - variables:
-                        miss_count: >-
-                          {{ (miss_count + 1) if is_state('binary_sensor.moonlight_pi_reachable','off') else 0 }}
-                    - if:
-                        - condition: template
-                          value_template: "{{ miss_count >= 3 }}"
-                      then:
-                        - action: switch.turn_off
-                          target:
-                            entity_id: switch.moonlight_switch_1
-                        - stop: "Pi unreachable on 3 consecutive checks, socket cut"
-                    - delay:
-                        seconds: 10
+      - if:
+          - condition: state
+            entity_id: switch.moonlight_switch_1
+            state: "off"
+        then:
+          - action: script.moonlight_pi_on
+        else:
+          - action: script.moonlight_pi_off
+    mode: single
+
+automation:
+  - id: moonlight_pi_button
+    alias: "Switch:Moonlight:Button"
+    description: >-
+      printer-button-1 (IKEA remote in the cellar) arrows: right = power the
+      Moonlight Pi on, left = clean shutdown then power off. The remote's
+      other buttons belong to the 3D printer (UI automation "Socket:3D
+      Printer").
+    triggers:
+      - trigger: device
+        domain: mqtt
+        device_id: 58cd238b9c0c706966ff8784d6c5a268   # printer-button-1
+        type: action
+        subtype: arrow_right_click
+        id: "on"
+      - trigger: device
+        domain: mqtt
+        device_id: 58cd238b9c0c706966ff8784d6c5a268   # printer-button-1
+        type: action
+        subtype: arrow_left_click
+        id: "off"
+    actions:
+      - if:
+          - condition: trigger
+            id: "on"
+        then:
+          - action: script.turn_on
+            target:
+              entity_id: script.moonlight_pi_on
+        else:
+          - action: script.turn_on
+            target:
+              entity_id: script.moonlight_pi_off
     mode: single
