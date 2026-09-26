@@ -201,14 +201,18 @@ automation:
           seconds: 0
         id: "Turn off by motion sensor"
     conditions:
-      - alias: "Morning-open triggers only act on their own matching day type"
+      - alias: "Morning-open triggers only re-preset lights already on, on their own day type"
         condition: template
+        # Morning open only switches already-lit lamps from night to daytime;
+        # it must not turn them on in an empty hallway (off only happens on a
+        # motion on->off edge, so they'd stay lit until someone walked by).
         value_template: >-
           {% set is_effective_workday = is_state('binary_sensor.workday_sensor','on')
              and states('input_number.holiday_days_left')|int(0) <= 0 %}
           {{ trigger.id not in ['Morning open (workday)', 'Morning open (holiday)']
-             or (trigger.id == 'Morning open (workday)' and is_effective_workday)
-             or (trigger.id == 'Morning open (holiday)' and not is_effective_workday) }}
+             or (is_state('light.all_hallway_lights', 'on')
+                 and ((trigger.id == 'Morning open (workday)' and is_effective_workday)
+                      or (trigger.id == 'Morning open (holiday)' and not is_effective_workday))) }}
     actions:
       - choose:
           - alias: "Hallway daytime"
@@ -344,7 +348,10 @@ automation:
                              | map(attribute='entity_id') | list }}
                     - delay:
                         seconds: 4
-    mode: single
+    # restart, not single: the off branch stays busy ~15s (transition wait +
+    # straggler retries), and single mode silently dropped motion-on triggers
+    # arriving in that window, leaving someone in a dark hallway.
+    mode: restart
 
   # ── 2. Full-output override (cleaning / cupboard) ─────────────────────────
   - id: hallway_override
